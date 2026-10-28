@@ -11,6 +11,10 @@ nonisolated final class HookConnection: Sendable {
 
     init(fd: Int32) { self.fd = fd }
 
+    deinit {
+        if open.withLock({ $0 }) { close(fd) }
+    }
+
     func reply(_ data: Data = Data()) {
         let shouldWrite = open.withLock { isOpen in
             defer { isOpen = false }
@@ -63,7 +67,12 @@ nonisolated final class HookServer: Sendable {
         }
         let handler = handler
         Thread.detachNewThread {
-            while let client = UnixSocket.accept(fd: listener) {
+            while true {
+                guard let client = UnixSocket.accept(fd: listener) else {
+                    // EINTR / ECONNABORTED are transient; EMFILE needs a moment.
+                    if errno == EMFILE || errno == ENFILE { Thread.sleep(forTimeInterval: 0.5) }
+                    continue
+                }
                 Thread.detachNewThread {
                     guard let line = UnixSocket.readLine(fd: client),
                           let envelope = try? JSONDecoder().decode(HookEnvelope.self, from: line) else {

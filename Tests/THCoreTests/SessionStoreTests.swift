@@ -119,6 +119,21 @@ private func storeWithTerminal(_ ttys: String...) -> SessionStore {
         #expect(store.dot(for: store.terminals[0]) == .green)
     }
 
+    @Test func cancelledRequestIsNotGreen() {
+        var store = storeWithTerminal("ttys001")
+        guard case .hold(let req) = store.apply(env("PermissionRequest", bash)).disposition else { return }
+        store.resolve(req.id, answered: false)
+        #expect(store.dot(for: store.terminals[0]) == .blue)
+    }
+
+    @Test func oldRequestsExpire() {
+        var store = storeWithTerminal("ttys001")
+        let start = Date.now
+        guard case .hold(let req) = store.apply(env("PermissionRequest", bash), now: start).disposition else { return }
+        #expect(store.expired(olderThan: 1800, now: start.addingTimeInterval(60)).isEmpty)
+        #expect(store.expired(olderThan: 1800, now: start.addingTimeInterval(1801)) == [req.id])
+    }
+
     @Test func bashActivitySummary() {
         #expect(activitySummary(tool: "Bash", input: .object(["command": .string("npm test\nnpm run lint")])) == "Bash · npm test")
         #expect(activitySummary(tool: "Edit", input: .object(["file_path": .string("/a/b/Invoices.swift")])) == "Edit · Invoices.swift")

@@ -55,7 +55,8 @@ public enum HookClient {
         guard waitForReply else { return Data() }
         UnixSocket.setReceiveTimeout(fd: fd, seconds: ackTimeout)
         guard UnixSocket.readLine(fd: fd) == holdAck else { return Data() }
-        UnixSocket.setReceiveTimeout(fd: fd, seconds: 0)
+        // The app expires held questions after 30 min; this is only a backstop.
+        UnixSocket.setReceiveTimeout(fd: fd, seconds: 40 * 60)
         return UnixSocket.readToEOF(fd: fd)
     }
 }

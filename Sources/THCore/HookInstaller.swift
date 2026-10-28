@@ -10,8 +10,9 @@ public enum HookInstaller {
         Entry(event: "SessionStart", matcher: nil, timeout: 10),
         Entry(event: "SessionEnd", matcher: nil, timeout: 10),
         Entry(event: "UserPromptSubmit", matcher: nil, timeout: 10),
-        Entry(event: "PreToolUse", matcher: nil, timeout: 10),
-        Entry(event: "PreToolUse", matcher: "AskUserQuestion", timeout: 3600),
+        // One entry for every tool: a second, AskUserQuestion-only entry would run
+        // th-hook twice for the same question. Only AskUserQuestion ever blocks.
+        Entry(event: "PreToolUse", matcher: nil, timeout: 3600),
         Entry(event: "PostToolUse", matcher: nil, timeout: 10),
         Entry(event: "PermissionRequest", matcher: nil, timeout: 3600),
         Entry(event: "Notification", matcher: nil, timeout: 10),
@@ -31,7 +32,7 @@ public enum HookInstaller {
                 "hooks": .array([.object([
                     "type": .string("command"),
                     "command": .string(command),
-                    "timeout": .number(Double(entry.timeout)),
+                    "timeout": .int(Int64(entry.timeout)),
                 ])]),
             ]
             if let matcher = entry.matcher { group["matcher"] = .string(matcher) }
@@ -74,9 +75,17 @@ public enum HookInstaller {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/settings.json")
     }
 
-    public static func readSettings(at url: URL = settingsURL) -> JSONValue {
-        guard let data = try? Data(contentsOf: url) else { return .object([:]) }
-        return JSONValue.parse(data) ?? .object([:])
+    public struct UnreadableSettings: LocalizedError {
+        public var errorDescription: String? { "~/.claude/settings.json ei ole kelvollista JSONia, joten sitä ei muutettu." }
+    }
+
+    /// A missing file reads as `{}`; a file that exists but cannot be parsed
+    /// throws, so it is never overwritten.
+    public static func readSettings(at url: URL = settingsURL) throws -> JSONValue {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .object([:]) }
+        let data = try Data(contentsOf: url)
+        guard let value = JSONValue.parse(data), value.object != nil else { throw UnreadableSettings() }
+        return value
     }
 
     /// Writes the new settings after saving a timestamped backup next to the file.

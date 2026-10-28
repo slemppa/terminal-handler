@@ -44,6 +44,8 @@ final class AppModel {
     }
 
     private func poll() async {
+        releaseVanishedHooks()
+        release(store.expired(olderThan: 30 * 60), answered: false)
         let foreground = await ProcessTable.foreground()
         guard let snapshot = await GhosttyBridge.snapshot() else {
             // A failed poll while Ghostty runs is transient: keep what we know.
@@ -56,7 +58,6 @@ final class AppModel {
             return t
         }
         apply(terminals: terminals, focusedID: GhosttyBridge.isFrontmost ? snapshot.focusedTerminalID : nil)
-        releaseVanishedHooks()
     }
 
     private func apply(terminals: [TerminalSnapshot], focusedID: String?) {
@@ -74,11 +75,7 @@ final class AppModel {
     /// Claude cancels a hook (e.g. Esc) by killing it; drop those questions.
     private func releaseVanishedHooks() {
         let gone = connections.filter { $0.value.peerClosed }.map(\.key)
-        for id in gone {
-            store.resolve(id)
-            connections[id] = nil
-        }
-        if !gone.isEmpty { rebuildRows() }
+        release(gone, answered: false)
     }
 
     private func rebuildRows() {
@@ -125,8 +122,14 @@ final class AppModel {
         case .none, .releaseNow:
             connection.reply()
         case .hold(let request):
-            connections[request.id] = connection
             connection.acknowledgeHold()
+            // th-hook gives up after 3 s without an ack; then Claude already shows its own prompt.
+            if connection.peerClosed {
+                connection.reply()
+                store.resolve(request.id, answered: false)
+                break
+            }
+            connections[request.id] = connection
             onQuestionArrived?()
             let repo = row(forTTY: request.tty)?.repo ?? "Claude"
             Notifier.announce(repo: repo, text: summary(of: request))
@@ -163,10 +166,14 @@ final class AppModel {
         connections = [:]
     }
 
-    private func release(_ ids: [UUID]) {
+    /// Gives held hooks back to Claude with no answer. With `answered: false`
+    /// they are also dropped from the store (cancelled or expired).
+    private func release(_ ids: [UUID], answered: Bool? = nil) {
         for id in ids {
             connections.removeValue(forKey: id)?.reply()
+            if answered == false { store.resolve(id, answered: false) }
         }
+        if answered == false, !ids.isEmpty { rebuildRows() }
     }
 
     func summary(of request: PendingRequest) -> String {

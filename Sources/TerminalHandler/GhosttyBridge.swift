@@ -4,10 +4,11 @@ import THCore
 
 /// Reads Ghostty's terminals and focuses them through its AppleScript dictionary.
 /// Never launches Ghostty: every call first checks that it is running.
-/// Scripts run on one private serial queue so a slow Ghostty or a pending
-/// permission prompt can never freeze the island.
+/// Scripts run on one dedicated thread so a slow Ghostty or a pending
+/// permission prompt can never freeze the island, and NSAppleScript is only
+/// ever touched from that single thread.
 nonisolated enum GhosttyBridge {
-    private static let queue = DispatchQueue(label: "fi.slemppa.TerminalHandler.ghostty", qos: .userInitiated)
+    private static let runner = ScriptThread()
 
     static let bundleID = "com.mitchellh.ghostty"
     private static let log = Logger(subsystem: "fi.slemppa.TerminalHandler", category: "ghostty")
@@ -25,7 +26,7 @@ nonisolated enum GhosttyBridge {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID
     }
 
-    // Only touched on `queue`.
+    // Only touched on `runner`'s thread.
     nonisolated(unsafe) private static let pollScript: NSAppleScript? = {
         let source = """
         set TB to character id 9
@@ -62,7 +63,7 @@ nonisolated enum GhosttyBridge {
     static func snapshot() async -> Snapshot? {
         guard isRunning else { return nil }
         return await withCheckedContinuation { continuation in
-            queue.async { continuation.resume(returning: runPoll()) }
+            runner.enqueue { continuation.resume(returning: runPoll()) }
         }
     }
 
@@ -96,7 +97,7 @@ nonisolated enum GhosttyBridge {
 
     static func focus(terminalID: String) {
         guard isRunning else { return }
-        queue.async { runFocus(terminalID) }
+        runner.enqueue(first: true) { runFocus(terminalID) }
     }
 
     private static func runFocus(_ terminalID: String) {
@@ -110,5 +111,36 @@ nonisolated enum GhosttyBridge {
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
         if let error { log.error("focus failed: \(error, privacy: .public)") }
+    }
+}
+
+/// A single long-lived thread that runs jobs in order. Focus requests jump
+/// the queue so jumping to a terminal never waits behind a poll.
+nonisolated final class ScriptThread: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var jobs: [@Sendable () -> Void] = []
+
+    init() {
+        let thread = Thread { [unowned self] in self.loop() }
+        thread.name = "fi.slemppa.TerminalHandler.applescript"
+        thread.qualityOfService = .userInitiated
+        thread.start()
+    }
+
+    func enqueue(first: Bool = false, _ job: @escaping @Sendable () -> Void) {
+        condition.lock()
+        if first { jobs.insert(job, at: 0) } else { jobs.append(job) }
+        condition.signal()
+        condition.unlock()
+    }
+
+    private func loop() -> Never {
+        while true {
+            condition.lock()
+            while jobs.isEmpty { condition.wait() }
+            let job = jobs.removeFirst()
+            condition.unlock()
+            autoreleasepool { job() }
+        }
     }
 }

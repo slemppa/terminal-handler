@@ -10,7 +10,7 @@ enum HookSetup {
     static var command: String { HookInstaller.command(forHelperAt: helperPath) }
 
     static var isInstalled: Bool {
-        HookInstaller.isInstalled(HookInstaller.readSettings(), command: command)
+        (try? HookInstaller.readSettings()).map { HookInstaller.isInstalled($0, command: command) } ?? false
     }
 
     /// Shows exactly what will be added and installs on confirmation.
@@ -46,16 +46,22 @@ enum HookSetup {
     }
 
     static func install() {
-        let settings = HookInstaller.readSettings()
         do {
+            let settings = try HookInstaller.readSettings()
             try HookInstaller.write(HookInstaller.install(into: settings, command: command))
         } catch {
+            NSApp.activate()
             NSAlert(error: error).runModal()
         }
     }
 
     static func uninstall() {
-        let settings = HookInstaller.readSettings()
-        try? HookInstaller.write(HookInstaller.uninstall(from: settings, command: command))
+        do {
+            let settings = try HookInstaller.readSettings()
+            try HookInstaller.write(HookInstaller.uninstall(from: settings, command: command))
+        } catch {
+            NSApp.activate()
+            NSAlert(error: error).runModal()
+        }
     }
 }

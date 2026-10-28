@@ -72,17 +72,31 @@ private func makeTempDir() throws -> URL {
     @Test func blockingEntriesHaveLongTimeout() {
         let installed = HookInstaller.install(into: .object([:]), command: ours)
         let permission = installed["hooks"]?["PermissionRequest"]?.array?.first?["hooks"]?.array?.first
-        #expect(permission?["timeout"] == .number(3600))
-        let ask = installed["hooks"]?["PreToolUse"]?.array?.first { $0["matcher"] == .string("AskUserQuestion") }
-        #expect(ask?["hooks"]?.array?.first?["timeout"] == .number(3600))
+        #expect(permission?["timeout"] == .int(3600))
+        let pre = installed["hooks"]?["PreToolUse"]?.array ?? []
+        #expect(pre.count == 1)
+        #expect(pre.first?["hooks"]?.array?.first?["timeout"] == .int(3600))
+    }
+
+    @Test func unparsableSettingsThrow() throws {
+        let url = try makeTempDir().appending(path: "settings.json")
+        try Data("{ not json".utf8).write(to: url)
+        #expect(throws: HookInstaller.UnreadableSettings.self) { try HookInstaller.readSettings(at: url) }
+    }
+
+    @Test func largeIntegersSurviveRoundTrip() throws {
+        let data = Data(#"{"big":9007199254740993,"f":0.5,"b":true}"#.utf8)
+        let value = try #require(JSONValue.parse(data))
+        #expect(value["big"] == .int(9007199254740993))
+        #expect(JSONValue.parse(value.encoded()) == value)
     }
 
     @Test func fileWriteKeepsBackup() throws {
         let dir = try makeTempDir()
         let url = dir.appending(path: "settings.json")
         try foreign.encoded().write(to: url)
-        try HookInstaller.write(HookInstaller.install(into: HookInstaller.readSettings(at: url), command: ours), to: url)
-        #expect(HookInstaller.isInstalled(HookInstaller.readSettings(at: url), command: ours))
+        try HookInstaller.write(HookInstaller.install(into: try HookInstaller.readSettings(at: url), command: ours), to: url)
+        #expect(HookInstaller.isInstalled(try HookInstaller.readSettings(at: url), command: ours))
         let backups = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix("settings.json.th-backup-") }
         #expect(backups.count == 1)
     }

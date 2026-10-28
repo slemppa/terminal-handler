@@ -71,7 +71,7 @@ public struct SessionStore: Sendable {
             cleared = removePending { $0.tty == tty }
             session.status = .done
         case "Notification":
-            if payload["notification_type"]?.string == "idle_prompt", !hasPending(tty) {
+            if ["idle_prompt", "agent_needs_input"].contains(payload["notification_type"]?.string ?? ""), !hasPending(tty) {
                 session.status = .done
             }
         case "PostToolUse":
@@ -99,14 +99,20 @@ public struct SessionStore: Sendable {
         return (disposition, cleared)
     }
 
-    /// Removes a request after it was answered or released.
-    public mutating func resolve(_ id: UUID) {
+    /// Removes a request. `answered` is true when Sami answered it in the
+    /// island (Claude carries on); false when Claude cancelled it.
+    public mutating func resolve(_ id: UUID, answered: Bool = true) {
         guard let req = pending.first(where: { $0.id == id }) else { return }
         pending.removeAll { $0.id == id }
         if var session = sessions[req.tty], session.status.isWaiting, !hasPending(req.tty) {
-            session.status = .working("Jatkaa…")
+            session.status = answered ? .working("Jatkaa…") : .done
             sessions[req.tty] = session
         }
+    }
+
+    /// Held requests older than `age`, for the app to give back to Claude.
+    public func expired(olderThan age: TimeInterval, now: Date = .now) -> [UUID] {
+        pending.filter { now.timeIntervalSince($0.createdAt) > age }.map(\.id)
     }
 
     /// Releases any request held for `tty` (Sami went to the terminal himself).
