@@ -48,7 +48,6 @@ public enum HookClient {
         line.append(0x0A)
         guard UnixSocket.writeAll(fd: fd, data: line) else { return nil }
         guard waitForReply else { return Data() }
-        shutdown(fd, SHUT_WR)
         return UnixSocket.readToEOF(fd: fd)
     }
 }
