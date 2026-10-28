@@ -6,15 +6,19 @@ import SwiftUI
 /// UI state shared by the panel and the SwiftUI view.
 @Observable
 final class IslandState {
+    static let pillHeight: CGFloat = 30
+
     var expanded = false
     /// Opened with the hotkey: ⌘1…⌘9 and Esc are live until it closes.
     var keyboardMode = false
-    /// The island's laid-out size, used for hit testing.
-    var islandSize = CGSize(width: 120, height: 28)
-    var menuBarHeight: CGFloat = 28
+    /// The list opens downwards in the top half of the screen, upwards in the bottom half.
+    var opensDownward = true
+    var dragging = false
+    /// The island's frame inside the panel (top-left origin), used for hit testing.
+    var islandFrame = CGRect.zero
 }
 
-/// Borderless, non-activating panel pinned to the top centre of the main display.
+/// Borderless, non-activating panel that floats above every app and Space.
 final class IslandPanel: NSPanel {
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -33,7 +37,10 @@ final class IslandPanel: NSPanel {
 }
 
 final class IslandController {
-    static let panelSize = CGSize(width: 520, height: 560)
+    static let panelSize = CGSize(width: 440, height: 600)
+    /// Half the expanded width plus a margin, so the open list stays on screen.
+    private static let edgeInset: CGFloat = 214
+    private static let anchorKey = "islandAnchor"
 
     private let model: AppModel
     private let state = IslandState()
@@ -42,17 +49,25 @@ final class IslandController {
     private var insideSince: Date?
     private var outsideSince: Date?
     private var autoCollapseAt: Date?
+    /// Centre of the pill in screen coordinates.
+    private var anchor: CGPoint
+    private var dragStart: (mouse: CGPoint, anchor: CGPoint)?
 
     init(model: AppModel) {
         self.model = model
+        anchor = Self.savedAnchor() ?? Self.defaultAnchor()
         let host = FirstMouseHostingView(rootView: IslandView(model: model, state: state, controller: self))
         host.sizingOptions = []
         panel.contentView = host
-        positionPanel()
+        placePanel()
         panel.orderFrontRegardless()
 
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.positionPanel() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.anchor = self.clamped(self.anchor)
+                self.placePanel()
+            }
         }
         mouseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.trackMouse() }
@@ -65,30 +80,75 @@ final class IslandController {
 
     // MARK: Placement
 
-    private var screen: NSScreen? { NSScreen.screens.first }
-
-    private func positionPanel() {
-        guard let screen else { return }
-        let frame = screen.frame
-        let menuBar = frame.maxY - screen.visibleFrame.maxY
-        state.menuBarHeight = menuBar > 0 ? menuBar : 28
-        let size = Self.panelSize
-        panel.setFrame(CGRect(x: frame.midX - size.width / 2, y: frame.maxY - size.height,
-                              width: size.width, height: size.height), display: true)
+    private static func defaultAnchor() -> CGPoint {
+        let visible = NSScreen.screens.first?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        return CGPoint(x: visible.maxX - edgeInset - 20, y: visible.maxY - IslandState.pillHeight / 2 - 12)
     }
 
-    /// The island's current rect in screen coordinates, padded for easier hover.
+    private static func savedAnchor() -> CGPoint? {
+        guard let values = UserDefaults.standard.array(forKey: anchorKey) as? [Double], values.count == 2 else { return nil }
+        return CGPoint(x: values[0], y: values[1])
+    }
+
+    private func screen(containing point: CGPoint) -> NSScreen? {
+        NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.screens.first
+    }
+
+    /// Keeps the pill fully visible and far enough from the sides for the open list.
+    private func clamped(_ point: CGPoint) -> CGPoint {
+        guard let visible = screen(containing: point)?.visibleFrame else { return point }
+        let half = IslandState.pillHeight / 2
+        let inset = min(Self.edgeInset, visible.width / 2)
+        return CGPoint(x: min(max(point.x, visible.minX + inset), visible.maxX - inset),
+                       y: min(max(point.y, visible.minY + half + 4), visible.maxY - half - 4))
+    }
+
+    /// Positions the panel so the pill sits on `anchor` and the list has room to open.
+    private func placePanel() {
+        let size = Self.panelSize
+        if let screen = screen(containing: anchor) {
+            state.opensDownward = anchor.y > screen.visibleFrame.midY
+        }
+        let half = IslandState.pillHeight / 2
+        let pad: CGFloat = 12 // IslandView's vertical padding, room for the shadow
+        let y = state.opensDownward ? anchor.y + half + pad - size.height : anchor.y - half - pad
+        panel.setFrame(CGRect(x: anchor.x - size.width / 2, y: y, width: size.width, height: size.height), display: true)
+    }
+
+    /// The island's rect in screen coordinates, padded for easier hover.
     private var hitRect: CGRect {
-        guard let screen else { return .zero }
-        let size = state.islandSize
-        let pad: CGFloat = state.expanded ? 6 : 10
-        return CGRect(x: screen.frame.midX - size.width / 2 - pad, y: screen.frame.maxY - size.height - pad,
-                      width: size.width + pad * 2, height: size.height + pad)
+        let f = state.islandFrame
+        let rect = CGRect(x: panel.frame.minX + f.minX, y: panel.frame.maxY - f.maxY, width: f.width, height: f.height)
+        return rect.insetBy(dx: state.expanded ? -6 : -8, dy: state.expanded ? -6 : -8)
+    }
+
+    // MARK: Dragging
+
+    func dragChanged() {
+        let mouse = NSEvent.mouseLocation
+        if dragStart == nil {
+            dragStart = (mouse, anchor)
+            state.dragging = true
+            setExpanded(false)
+        }
+        guard let start = dragStart else { return }
+        anchor = CGPoint(x: start.anchor.x + mouse.x - start.mouse.x, y: start.anchor.y + mouse.y - start.mouse.y)
+        placePanel()
+    }
+
+    func dragEnded() {
+        dragStart = nil
+        state.dragging = false
+        anchor = clamped(anchor)
+        placePanel()
+        UserDefaults.standard.set([anchor.x, anchor.y], forKey: Self.anchorKey)
+        insideSince = nil
     }
 
     // MARK: Mouse
 
     private func trackMouse() {
+        guard !state.dragging else { return }
         let inside = hitRect.contains(NSEvent.mouseLocation)
         panel.ignoresMouseEvents = !inside
         let now = Date.now
@@ -96,7 +156,8 @@ final class IslandController {
             outsideSince = nil
             autoCollapseAt = nil
             if insideSince == nil { insideSince = now }
-            if !state.expanded, let since = insideSince, now.timeIntervalSince(since) >= 0.15 {
+            // A held mouse button means a drag may be starting: don't open under it.
+            if !state.expanded, NSEvent.pressedMouseButtons == 0, let since = insideSince, now.timeIntervalSince(since) >= 0.25 {
                 setExpanded(true)
             }
         } else {
@@ -115,7 +176,7 @@ final class IslandController {
 
     /// A new question: pop open for a while unless Sami is already in it.
     func questionArrived() {
-        guard !state.expanded else { return }
+        guard !state.expanded, !state.dragging else { return }
         setExpanded(true)
         autoCollapseAt = Date.now.addingTimeInterval(6)
     }

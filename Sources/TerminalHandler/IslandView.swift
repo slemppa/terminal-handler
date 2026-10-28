@@ -36,29 +36,39 @@ struct IslandView: View {
     let controller: IslandController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var radius: CGFloat { state.expanded ? 22 : state.menuBarHeight / 2 }
+    private var radius: CGFloat { state.expanded ? 22 : IslandState.pillHeight / 2 }
+    private var edge: UnitPoint { state.opensDownward ? .top : .bottom }
 
     var body: some View {
         VStack(spacing: 0) {
+            if !state.opensDownward { Spacer(minLength: 0) }
             Group {
                 if state.expanded {
                     ExpandedContent(model: model, state: state, controller: controller)
-                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92, anchor: edge)))
                 } else {
                     PillContent(model: model)
-                        .frame(height: state.menuBarHeight)
+                        .frame(height: IslandState.pillHeight)
+                        .contentShape(.capsule)
+                        .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                            .onChanged { _ in controller.dragChanged() }
+                            .onEnded { _ in controller.dragEnded() })
                         .transition(.opacity)
                 }
             }
-            .background(.black, in: UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous))
-            .shadow(color: .black.opacity(state.expanded ? 0.35 : 0), radius: 18, y: 8)
-            .onGeometryChange(for: CGSize.self) { $0.size } action: { state.islandSize = $0 }
+            .background(.black, in: .rect(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+            .shadow(color: .black.opacity(state.expanded ? 0.35 : 0.25), radius: state.expanded ? 18 : 6, y: state.expanded ? 8 : 2)
+            .scaleEffect(state.dragging ? 1.06 : 1)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { state.islandFrame = $0 }
             .contextMenu { IslandMenu(model: model) }
-            Spacer(minLength: 0)
+            if state.opensDownward { Spacer(minLength: 0) }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.colorScheme, .dark)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.38, dampingFraction: 1.0), value: state.expanded)
+        .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.8), value: state.dragging)
         .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1.0), value: model.rows)
     }
 }
@@ -117,8 +127,7 @@ private struct ExpandedContent: View {
                 }
             }
         }
-        .padding(.top, state.menuBarHeight * 0.5)
-        .padding([.horizontal, .bottom], 12)
+        .padding(12)
         .frame(width: 400)
     }
 }
@@ -183,7 +192,7 @@ private struct QuestionCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 DotView(dot: .orange, size: 8)
-                Text(row?.repo ?? "Claude").font(.system(size: 13, weight: .semibold))
+                Text(row?.repo ?? "Claude").font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 if let branch = row?.branch {
                     Text(branch).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
                 }

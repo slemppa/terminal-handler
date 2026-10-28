@@ -32,7 +32,7 @@ Success: he never cycles through Ghostty windows to find "which one was waiting"
 
 ## Decided with Sami
 
-- **Form:** a Dynamic Island-style black "island" at the top centre of the screen, over the menu bar. The display has no notch (2560×1600). It has three states, all approved from mockups:
+- **Form:** a black "island" capsule. It was first placed at the top centre over the menu bar. **Changed on 2026-10-28 at Sami's request: it floats above everything and he can drag it anywhere on the screen.** It defaults to the top-right below the menu bar and remembers its position. The list opens downwards in the top half of the screen and upwards in the bottom half. It has three states, all approved from mockups:
   1. **Resting:** a small black pill with one dot per Ghostty terminal. Orange = waiting for Sami, green = working, grey = idle. Plus a short text such as "2 waiting".
   2. **Expanded (hover over the pill, or a global hotkey):** the island springs open into a list. Each row shows a status dot, repo name, branch, a one-line activity summary, and a ⌘1…⌘n shortcut. A click jumps to that Ghostty terminal. Moving the mouse away collapses it.
   3. **Question:** when Claude asks something, the island expands by itself for a moment and shows the repo/branch, the question (for a permission: the command or tool), and buttons ("Allow" / "Deny" / "Open window ↗", or the AskUserQuestion options). If he does not react, it collapses back to the pill and the dot stays orange.
@@ -84,7 +84,7 @@ Three parts:
 
 **Scope of the session match (decided with Sami):** Claude always runs directly in Ghostty (no tmux, ssh or other terminals). A hook whose TTY does not match any Ghostty terminal is released at once with no output and ignored.
 
-**Display (decided with Sami):** the island lives only on the main display (`NSScreen.main`, i.e. the one with the menu bar). Follow changes when the display configuration changes.
+**Display:** the island starts on the main display. Because it can now be dragged, it may also be dropped on another display, and it is clamped to that display's visible area.
 
 **Answering from the island: "the question is where you are" (my call):**
 For `PermissionRequest` and `AskUserQuestion` the hook helper blocks and waits for the app:
