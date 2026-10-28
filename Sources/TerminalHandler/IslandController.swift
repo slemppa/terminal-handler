@@ -52,6 +52,8 @@ final class IslandController {
     /// Centre of the pill in screen coordinates.
     private var anchor: CGPoint
     private var dragStart: (mouse: CGPoint, anchor: CGPoint)?
+    private var mouseDownAt: CGPoint?
+    private var mouseMonitor: Any?
 
     init(model: AppModel) {
         self.model = model
@@ -71,6 +73,11 @@ final class IslandController {
         }
         mouseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.trackMouse() }
+        }
+        // Dragging is handled at the AppKit level so it works from any state
+        // and is not fought over by SwiftUI's buttons and hover tracking.
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            self?.handleMouse(event) ?? event
         }
         let toggle = HotkeyDefaults.toggle
         HotkeyCenter.shared.register(id: 1, keyCode: toggle.keyCode, modifiers: toggle.modifiers) { [weak self] in
@@ -124,19 +131,41 @@ final class IslandController {
 
     // MARK: Dragging
 
-    func dragChanged() {
+    /// Returns nil to swallow the event once it has become a drag.
+    private func handleMouse(_ event: NSEvent) -> NSEvent? {
+        guard event.window === panel else { return event }
         let mouse = NSEvent.mouseLocation
-        if dragStart == nil {
-            dragStart = (mouse, anchor)
-            state.dragging = true
-            setExpanded(false)
+        switch event.type {
+        case .leftMouseDown:
+            mouseDownAt = mouse
+            return event
+        case .leftMouseDragged:
+            guard let down = mouseDownAt else { return event }
+            if dragStart == nil {
+                guard hypot(mouse.x - down.x, mouse.y - down.y) > 4 else { return event }
+                dragStart = (down, anchor)
+                state.dragging = true
+                setExpanded(false)
+            }
+            dragMoved(to: mouse)
+            return nil
+        case .leftMouseUp:
+            mouseDownAt = nil
+            guard dragStart != nil else { return event }
+            dragEnded()
+            return nil
+        default:
+            return event
         }
+    }
+
+    private func dragMoved(to mouse: CGPoint) {
         guard let start = dragStart else { return }
         anchor = CGPoint(x: start.anchor.x + mouse.x - start.mouse.x, y: start.anchor.y + mouse.y - start.mouse.y)
         placePanel()
     }
 
-    func dragEnded() {
+    private func dragEnded() {
         dragStart = nil
         state.dragging = false
         anchor = clamped(anchor)

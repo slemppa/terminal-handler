@@ -50,9 +50,6 @@ struct IslandView: View {
                     PillContent(model: model)
                         .frame(height: IslandState.pillHeight)
                         .contentShape(.capsule)
-                        .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
-                            .onChanged { _ in controller.dragChanged() }
-                            .onEnded { _ in controller.dragEnded() })
                         .transition(.opacity)
                 }
             }
