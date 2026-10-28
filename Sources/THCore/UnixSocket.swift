@@ -53,6 +53,12 @@ public enum UnixSocket {
         return client
     }
 
+    /// 0 means no timeout.
+    public static func setReceiveTimeout(fd: Int32, seconds: TimeInterval) {
+        var tv = timeval(tv_sec: Int(seconds), tv_usec: Int32((seconds - floor(seconds)) * 1_000_000))
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    }
+
     @discardableResult
     public static func writeAll(fd: Int32, data: Data) -> Bool {
         data.withUnsafeBytes { raw in

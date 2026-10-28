@@ -39,15 +39,23 @@ public enum HookPaths {
 }
 
 public enum HookClient {
+    /// First line the app sends when it decides to hold a blocking hook.
+    public static let holdAck = Data("HOLD".utf8)
+
     /// Sends one envelope. Returns the reply (possibly empty) for blocking
     /// events, empty data for fire-and-forget ones, or nil on any failure.
-    public static func send(_ envelope: HookEnvelope, socketPath: String, waitForReply: Bool) -> Data? {
+    /// A blocking hook only waits indefinitely once the app has acknowledged
+    /// it within `ackTimeout`, so a hung app can never stall Claude.
+    public static func send(_ envelope: HookEnvelope, socketPath: String, waitForReply: Bool, ackTimeout: TimeInterval = 3) -> Data? {
         guard let fd = UnixSocket.connect(path: socketPath) else { return nil }
         defer { close(fd) }
         var line = (try? JSONEncoder().encode(envelope)) ?? Data()
         line.append(0x0A)
         guard UnixSocket.writeAll(fd: fd, data: line) else { return nil }
         guard waitForReply else { return Data() }
+        UnixSocket.setReceiveTimeout(fd: fd, seconds: ackTimeout)
+        guard UnixSocket.readLine(fd: fd) == holdAck else { return Data() }
+        UnixSocket.setReceiveTimeout(fd: fd, seconds: 0)
         return UnixSocket.readToEOF(fd: fd)
     }
 }

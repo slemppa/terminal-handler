@@ -42,6 +42,7 @@ private let samplePayload: JSONValue = .object([
             let line = UnixSocket.readLine(fd: fd)
             let env = line.flatMap { try? JSONDecoder().decode(HookEnvelope.self, from: $0) }
             if env?.tty == "ttys009" {
+                UnixSocket.writeAll(fd: fd, data: Data("HOLD\n".utf8))
                 UnixSocket.writeAll(fd: fd, data: Data(#"{"ok":1}"#.utf8))
             }
         }
@@ -58,6 +59,20 @@ private let samplePayload: JSONValue = .object([
             HookEnvelope(tty: nil, claudePID: nil, payload: samplePayload),
             socketPath: path, waitForReply: true)
         #expect(reply?.isEmpty ?? true)
+    }
+
+    @Test func hungAppTimesOutEmpty() throws {
+        let path = tempSocketPath()
+        _ = try serveOnce(at: path) { fd in
+            _ = UnixSocket.readLine(fd: fd)
+            Thread.sleep(forTimeInterval: 1.5) // never acknowledges
+        }
+        let start = Date()
+        let reply = HookClient.send(
+            HookEnvelope(tty: "ttys009", claudePID: 1, payload: samplePayload),
+            socketPath: path, waitForReply: true, ackTimeout: 0.3)
+        #expect(reply?.isEmpty ?? true)
+        #expect(Date().timeIntervalSince(start) < 1.0)
     }
 
     @Test(arguments: [
