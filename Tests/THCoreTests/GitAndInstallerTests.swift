@@ -10,11 +10,11 @@ private func makeTempDir() throws -> URL {
 
 @Suite struct GitInfoTests {
     @Test func branchFromHead() throws {
-        let repo = try makeTempDir().appending(path: "rascal-crm")
+        let repo = try makeTempDir().appending(path: "my-app")
         try FileManager.default.createDirectory(at: repo.appending(path: ".git"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: repo.appending(path: "src/deep"), withIntermediateDirectories: true)
         try "ref: refs/heads/feat/invoices\n".write(to: repo.appending(path: ".git/HEAD"), atomically: true, encoding: .utf8)
-        #expect(GitInfo.resolve(cwd: repo.appending(path: "src/deep").path) == GitInfo(repoName: "rascal-crm", branch: "feat/invoices"))
+        #expect(GitInfo.resolve(cwd: repo.appending(path: "src/deep").path) == GitInfo(repoName: "my-app", branch: "feat/invoices"))
     }
 
     @Test func detachedHead() throws {
