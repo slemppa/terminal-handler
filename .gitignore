@@ -6,3 +6,4 @@ DerivedData/
 xcuserdata/
 .build/
 .swiftpm/
+.claude/scheduled_tasks.lock
