@@ -61,6 +61,8 @@ final class IslandController {
         let host = FirstMouseHostingView(rootView: IslandView(model: model, state: state, controller: self))
         host.sizingOptions = []
         panel.contentView = host
+        // A position saved on a display that is no longer attached would leave the island off screen.
+        anchor = clamped(anchor)
         placePanel()
         panel.orderFrontRegardless()
 
@@ -79,6 +81,7 @@ final class IslandController {
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             self?.handleMouse(event) ?? event
         }
+        model.jarvis.onPhaseChange = { [weak self] phase in self?.jarvisPhaseChanged(phase) }
         let toggle = HotkeyDefaults.toggle
         HotkeyCenter.shared.register(id: 1, keyCode: toggle.keyCode, modifiers: toggle.modifiers) { [weak self] in
             self?.toggleFromKeyboard()
@@ -212,6 +215,41 @@ final class IslandController {
 
     func collapse() { setExpanded(false) }
 
+    /// Jarvis heard a command: open and stay open while it works and speaks,
+    /// then close a moment after it falls silent.
+    private func jarvisPhaseChanged(_ phase: JarvisController.Phase) {
+        switch phase {
+        case .received, .thinking, .speaking:
+            if !state.expanded, !state.dragging { setExpanded(true) }
+            if state.expanded { autoCollapseAt = .distantFuture }
+        case .idle, .failed:
+            if state.expanded, autoCollapseAt != nil { autoCollapseAt = Date.now.addingTimeInterval(phase == .idle ? 5 : 8) }
+        }
+        updateEscape()
+    }
+
+    /// Esc is a global hotkey only while it means something: closing the
+    /// keyboard-opened list, or silencing Jarvis. Not while Jarvis only
+    /// thinks, so Esc is not taken from other apps for a whole turn.
+    private func updateEscape() {
+        let center = HotkeyCenter.shared
+        if state.keyboardMode || model.jarvis.isSpeaking {
+            center.register(id: 2, keyCode: UInt32(kVK_Escape), modifiers: 0) { [weak self] in self?.escapePressed() }
+        } else {
+            center.unregister(id: 2)
+        }
+    }
+
+    private func escapePressed() {
+        let jarvis = model.jarvis
+        if jarvis.isSpeaking {
+            jarvis.stopSpeaking()
+        } else {
+            collapse()
+        }
+        updateEscape()
+    }
+
     private func toggleFromKeyboard() {
         if state.expanded && state.keyboardMode {
             setExpanded(false)
@@ -235,16 +273,15 @@ final class IslandController {
         state.keyboardMode = on
         let center = HotkeyCenter.shared
         if on {
-            center.register(id: 2, keyCode: UInt32(kVK_Escape), modifiers: 0) { [weak self] in self?.collapse() }
             for (index, code) in HotkeyDefaults.digitKeyCodes.enumerated() {
                 center.register(id: UInt32(10 + index), keyCode: UInt32(code), modifiers: UInt32(cmdKey)) { [weak self] in
                     self?.jump(toRowAt: index)
                 }
             }
         } else {
-            center.unregister(id: 2)
             for index in HotkeyDefaults.digitKeyCodes.indices { center.unregister(id: UInt32(10 + index)) }
         }
+        updateEscape()
     }
 
     // MARK: Actions

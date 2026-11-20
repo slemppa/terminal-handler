@@ -29,7 +29,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSUIElement</key><true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Terminal Handler lukee Ghosttyn terminaalit ja siirtää sinut oikeaan välilehteen.</string>
+    <string>Terminal Handler lukee Ghosttyn terminaalit ja siirtää sinut oikeaan välilehteen. Jarvis-tila ohjaa appeja puhekomennoillasi.</string>
 </dict>
 </plist>
 PLIST
@@ -57,4 +57,8 @@ if [[ "${1:-}" != "--no-install" ]]; then
   rm -rf "$HOME/Applications/TerminalHandler.app"
   cp -R "$APP" "$HOME/Applications/TerminalHandler.app"
   echo "Installed to ~/Applications/TerminalHandler.app"
+  # Wait for the old instance to let go of the Jarvis port, then start the new one.
+  for _ in {1..20}; do pgrep -x TerminalHandler >/dev/null || break; sleep 0.25; done
+  open "$HOME/Applications/TerminalHandler.app"
+  echo "Launched"
 fi

@@ -8,8 +8,9 @@ import THCore
 let input = FileHandle.standardInput.readDataToEndOfFile()
 guard let payload = JSONValue.parse(input) else { exit(0) }
 
-let owner = controllingTTY(startingAt: getppid())
-let envelope = HookEnvelope(tty: owner?.tty, claudePID: owner?.pid, payload: payload)
+let environment = ProcessInfo.processInfo.environment
+let owner = environment["TH_JARVIS"] == "1" ? nil : controllingTTY(startingAt: getppid())
+let envelope = HookEnvelope.make(payload: payload, environment: environment, owner: owner)
 let blocking = isBlockingEvent(payload)
 
 if let reply = HookClient.send(envelope, socketPath: HookPaths.socketPath, waitForReply: blocking),

@@ -82,6 +82,9 @@ private struct PillContent: View {
             } else {
                 ForEach(model.rows) { DotView(dot: $0.dot) }
             }
+            if model.jarvis.phase != .idle {
+                JarvisPillBadge(jarvis: model.jarvis).padding(.leading, 3)
+            }
             if model.waitingCount > 0 {
                 Text("\(model.waitingCount) odottaa")
                     .font(.system(size: 11, weight: .semibold))
@@ -104,11 +107,14 @@ private struct ExpandedContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if model.jarvis.isRecent {
+                JarvisCard(jarvis: model.jarvis)
+            }
             if let request = model.pending.first {
                 QuestionCard(model: model, request: request, queued: model.pending.count - 1, controller: controller)
                     .id(request.id)
             }
-            if model.rows.isEmpty {
+            if model.rows.isEmpty, !model.jarvis.isRecent {
                 Text("Ei avoimia Ghostty-terminaaleja")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -186,10 +192,11 @@ private struct QuestionCard: View {
 
     var body: some View {
         let row = model.row(forTTY: request.tty)
+        let isJarvis = request.tty == SessionStore.jarvisTTY
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 DotView(dot: .orange, size: 8)
-                Text(row?.repo ?? "Claude").font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(isJarvis ? "Jarvis" : row?.repo ?? "Claude").font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 if let branch = row?.branch {
                     Text(branch).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -200,13 +207,13 @@ private struct QuestionCard: View {
             }
             switch request.kind {
             case .permission(let tool, let detail):
-                PermissionBody(tool: tool, detail: detail) { answer in
-                    model.answer(request.id, with: answer)
-                } open: { open() }
+                PermissionBody(tool: tool, detail: detail, agent: isJarvis ? "Jarvis" : "Claude",
+                               decide: { model.answer(request.id, with: $0) },
+                               open: isJarvis ? nil : { open() })
             case .question(let questions):
-                QuestionBody(questions: questions) { answers in
-                    model.answer(request.id, with: .choices(answers))
-                } open: { open() }
+                QuestionBody(questions: questions,
+                             submit: { model.answer(request.id, with: .choices($0)) },
+                             open: isJarvis ? nil : { open() })
             }
         }
         .padding(12)
@@ -222,12 +229,14 @@ private struct QuestionCard: View {
 private struct PermissionBody: View {
     let tool: String
     let detail: String
+    var agent = "Claude"
     let decide: (Answer) -> Void
-    let open: () -> Void
+    /// nil when there is no terminal to open (Jarvis runs headless).
+    let open: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(tool == "Bash" ? "Saako Claude ajaa komennon?" : "Saako Claude käyttää työkalua \(tool)?")
+            Text(tool == "Bash" ? "Saako \(agent) ajaa komennon?" : "Saako \(agent) käyttää työkalua \(tool)?")
                 .font(.system(size: 13))
             Text(detail)
                 .font(.system(size: 11, design: .monospaced))
@@ -240,7 +249,7 @@ private struct PermissionBody: View {
                 Button("Salli") { decide(.allow) }.buttonStyle(IslandButtonStyle(prominent: true))
                 Button("Kiellä") { decide(.deny) }.buttonStyle(IslandButtonStyle())
                 Spacer()
-                Button("Avaa ikkuna ↗", action: open).buttonStyle(IslandButtonStyle())
+                if let open { Button("Avaa ikkuna ↗", action: open).buttonStyle(IslandButtonStyle()) }
             }
         }
     }
@@ -249,7 +258,7 @@ private struct PermissionBody: View {
 private struct QuestionBody: View {
     let questions: [AskQuestion]
     let submit: ([String: String]) -> Void
-    let open: () -> Void
+    let open: (() -> Void)?
     @State private var index = 0
     @State private var answers: [String: String] = [:]
     @State private var selected: Set<String> = []
@@ -283,14 +292,14 @@ private struct QuestionBody: View {
                             .disabled(selected.isEmpty)
                     }
                     Spacer()
-                    Button("Avaa ikkuna ↗", action: open).buttonStyle(IslandButtonStyle())
+                    if let open { Button("Avaa ikkuna ↗", action: open).buttonStyle(IslandButtonStyle()) }
                 }
             }
         } else {
             HStack {
                 Text("Claude kysyy jotain, mitä ei voi näyttää tässä.").font(.system(size: 12))
                 Spacer()
-                Button("Avaa ikkuna ↗", action: open).buttonStyle(IslandButtonStyle())
+                if let open { Button("Avaa ikkuna ↗", action: open).buttonStyle(IslandButtonStyle()) }
             }
         }
     }
@@ -378,6 +387,18 @@ struct IslandMenu: View {
             Button("Poista Claude-hookit") { HookSetup.uninstall() }
         } else {
             Button("Asenna Claude-hookit…") { HookSetup.offerInstall(force: true) }
+        }
+        Divider()
+        Section("Jarvis") {
+            if JarvisSettings.listening {
+                Button("Kopioi osoite (\(JarvisSettings.baseURL))") { JarvisSettings.copyBaseURL() }
+                Button("Kopioi API-avain") { JarvisSettings.copyKey() }
+            } else {
+                Text("Portti \(String(JarvisSettings.port)) on varattu")
+            }
+            if model.jarvis.isBusy || model.jarvis.isSpeaking {
+                Button("Keskeytä Jarvis") { model.jarvis.cancel() }
+            }
         }
         Divider()
         Button("Lopeta Terminal Handler") {
