@@ -57,4 +57,8 @@ if [[ "${1:-}" != "--no-install" ]]; then
   rm -rf "$HOME/Applications/TerminalHandler.app"
   cp -R "$APP" "$HOME/Applications/TerminalHandler.app"
   echo "Installed to ~/Applications/TerminalHandler.app"
+  # Wait for the old instance to let go of the Jarvis port, then start the new one.
+  for _ in {1..20}; do pgrep -x TerminalHandler >/dev/null || break; sleep 0.25; done
+  open "$HOME/Applications/TerminalHandler.app"
+  echo "Launched"
 fi
