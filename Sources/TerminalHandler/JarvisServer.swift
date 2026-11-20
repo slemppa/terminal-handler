@@ -124,7 +124,11 @@ nonisolated final class JarvisServer: Sendable {
             }
             if !probe, let transcript = chat.transcript {
                 let onTranscript = onTranscript
-                Task { @MainActor in onTranscript(transcript) }
+                let fromFluidVoice = request.header("user-agent")?.hasPrefix("FluidVoice") ?? false
+                Task { @MainActor in
+                    onTranscript(transcript)
+                    if fromFluidVoice { FluidVoiceNotch.closeAfterReply() }
+                }
             }
         }
     }
