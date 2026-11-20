@@ -1,6 +1,6 @@
 # Jarvis-tila: siirtomuistio
 
-Tila 20.11.2026: rakennettu ja todennettu curlilla päästä päähän. Oikealla FluidVoicella ei ole vielä testattu.
+Tila 20.11.2026: rakennettu ja todennettu curlilla päästä päähän. FluidVoicella testattu: levytila- ja Brave-komennot toimivat, Satu puhuu.
 
 ## Tavoite
 
@@ -56,6 +56,13 @@ Sami painaa FluidVoicen Command Mode -näppäintä ja puhuu suomeksi. Transkript
 2. Ensimmäinen oikea komento. Tarkista `jarvis-requests.log`: polku, lähettääkö FluidVoice avaimen, kutsuuko se `/models`. Jos avainta ei tule: `defaults write fi.slemppa.TerminalHandler jarvisRequireKey -bool false`.
 3. Selvitä, lukeeko FluidVoice itse vastauksia ääneen. Jos lukee, tulee tuplapuhe.
 4. Testaa: "Avaa Safari ja mene rascalai.fi", "Paljonko levytilaa on jäljellä?", lupaa vaativa komento (Salli/Kiellä saarekkeessa) ja jonoon menevä toinen komento.
+
+## FluidVoicella todettu (20.11.)
+
+- FluidVoice 1.6.13 lähettää avaimen (Bearer), kutsuu `/models` ja tallentaessaan yhteystestin: yksi user-viesti "test" ilman työkaluja. Testiin vastataan nyt "OK" käynnistämättä Jarvista (`ChatRequest.isConnectionProbe`).
+- Command Mode lähettää koko chat-historian (esim. messages=6, tools=1) ja streamin.
+- FluidVoicen punainen "Command"-ikkuna on sen expanded command output -notch (`CommandModeService.showExpandedNotchIfNeeded`). Sitä ei saa pois asetuksilla koneella, jossa ei ole notchia: piiloasetus `NotchPresentationMode=minimal` toimii vain notch-näytöllä. Sami hyväksyi ikkunan; suljetaan Escillä. Jos häiritsee: PR FluidVoicelle (asetus ehdoksi tuohon funktioon).
+- `scripts/bundle.sh` ei käynnistänyt appia uudelleen asennuksen jälkeen; käynnistä `open ~/Applications/TerminalHandler.app`.
 
 ## Avoimet riskit
 
