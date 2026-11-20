@@ -11,6 +11,10 @@ public struct SessionStore: Sendable {
     /// TTY of the focused terminal while Ghostty is frontmost, else nil.
     public var focusedTTY: String?
 
+    /// Virtual TTY of the app's headless Jarvis session. It has no Ghostty
+    /// terminal, but its permission requests are still held for the island.
+    public static let jarvisTTY = "jarvis"
+
     public init() {}
 
     // MARK: Inputs
@@ -19,7 +23,7 @@ public struct SessionStore: Sendable {
     /// Claude process is gone. Returns pending requests that were orphaned.
     public mutating func updateTerminals(_ snapshots: [TerminalSnapshot], isAlive: (Int32) -> Bool) -> [UUID] {
         terminals = snapshots
-        let ttys = Set(snapshots.map(\.tty))
+        let ttys = Set(snapshots.map(\.tty)).union([Self.jarvisTTY])
         for (tty, session) in sessions {
             let processGone = session.claudePID.map { !isAlive($0) } ?? false
             if !ttys.contains(tty) || processGone {
@@ -153,7 +157,7 @@ public struct SessionStore: Sendable {
     }
 
     public var waitingCount: Int {
-        terminals.count { dot(for: $0) == .orange }
+        terminals.count { dot(for: $0) == .orange } + (pending.contains { $0.tty == Self.jarvisTTY } ? 1 : 0)
     }
 
     // MARK: Private
@@ -163,7 +167,8 @@ public struct SessionStore: Sendable {
     }
 
     private mutating func hold(tty: String, env: HookEnvelope, kind: RequestKind, id: UUID, now: Date) -> HookDisposition {
-        guard terminals.contains(where: { $0.tty == tty }), focusedTTY != tty else { return .releaseNow }
+        let known = tty == Self.jarvisTTY || terminals.contains(where: { $0.tty == tty })
+        guard known, focusedTTY != tty else { return .releaseNow }
         let req = PendingRequest(id: id, tty: tty, sessionID: env.sessionID, kind: kind, payload: env.payload, createdAt: now)
         pending.append(req)
         return .hold(req)

@@ -6,12 +6,27 @@ public struct HookEnvelope: Codable, Sendable, Equatable {
     public var tty: String?
     public var claudePID: Int32?
     public var payload: JSONValue
+    /// "jarvis" when the hook ran inside the app's own headless Jarvis session.
+    public var origin: String?
 
-    public init(tty: String?, claudePID: Int32?, payload: JSONValue) {
+    public init(tty: String?, claudePID: Int32?, payload: JSONValue, origin: String? = nil) {
         self.tty = tty
         self.claudePID = claudePID
         self.payload = payload
+        self.origin = origin
     }
+
+    /// Envelope for a hook run by Claude. A headless Jarvis child has no TTY;
+    /// the app marks it with `TH_JARVIS=1` and it gets the virtual Jarvis TTY.
+    public static func make(payload: JSONValue, environment: [String: String],
+                            owner: (tty: String, pid: Int32)?) -> HookEnvelope {
+        if environment["TH_JARVIS"] == "1" {
+            return HookEnvelope(tty: SessionStore.jarvisTTY, claudePID: nil, payload: payload, origin: "jarvis")
+        }
+        return HookEnvelope(tty: owner?.tty, claudePID: owner?.pid, payload: payload)
+    }
+
+    public var isJarvis: Bool { origin == "jarvis" }
 
     public var eventName: String { payload["hook_event_name"]?.string ?? "" }
     public var sessionID: String { payload["session_id"]?.string ?? "" }
