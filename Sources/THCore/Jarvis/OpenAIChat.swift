@@ -11,6 +11,14 @@ public struct ChatRequest: Sendable, Equatable {
     public var messageCount: Int
     public var toolCount: Int
 
+    /// A client checking the provider works (FluidVoice sends one bare "test"
+    /// without tools when its settings are saved). Answered without running Jarvis.
+    public var isConnectionProbe: Bool {
+        guard messageCount == 1, toolCount == 0, let transcript else { return false }
+        let word = transcript.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespaces))
+        return ["test", "testi", "ping", "hi", "hello"].contains(word)
+    }
+
     public static func parse(_ body: Data) -> ChatRequest? {
         guard let json = JSONValue.parse(body), let messages = json["messages"]?.array else { return nil }
         let last = messages.last

@@ -108,7 +108,9 @@ nonisolated final class JarvisServer: Sendable {
             let id = "chatcmpl-jarvis-" + UUID().uuidString.prefix(12).lowercased()
             let created = Int(Date().timeIntervalSince1970)
             // Anything but a fresh command (e.g. a tool result) just ends the turn.
-            let text = chat.transcript == nil ? "Valmis." : Self.ackText
+            // A provider check gets a plain OK and never starts Jarvis.
+            let probe = chat.isConnectionProbe
+            let text = probe ? "OK" : chat.transcript == nil ? "Valmis." : Self.ackText
             if chat.stream {
                 var out = HTTPResponse.head(status: 200, headers: [
                     ("Content-Type", "text/event-stream; charset=utf-8"),
@@ -120,7 +122,7 @@ nonisolated final class JarvisServer: Sendable {
             } else {
                 send(fd, HTTPResponse.full(status: 200, body: JarvisAPI.completionBody(id: id, model: chat.model, created: created, text: text)))
             }
-            if let transcript = chat.transcript {
+            if !probe, let transcript = chat.transcript {
                 let onTranscript = onTranscript
                 Task { @MainActor in onTranscript(transcript) }
             }

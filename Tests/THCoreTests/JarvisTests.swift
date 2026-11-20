@@ -87,6 +87,27 @@ private func chatBody(stream: Bool, last: JSONValue) -> Data {
         #expect(ChatRequest.parse(Data("{}".utf8)) == nil)
         #expect(ChatRequest.parse(Data("nope".utf8)) == nil)
     }
+
+    private func probeBody(_ text: String, tools: Int = 0) -> Data {
+        var json: [String: JSONValue] = [
+            "model": .string("jarvis"),
+            "messages": .array([.object(["role": .string("user"), "content": .string(text)])]),
+        ]
+        if tools > 0 {
+            json["tools"] = .array(Array(repeating: .object(["type": .string("function")]), count: tools))
+        }
+        return JSONValue.object(json).encoded()
+    }
+
+    /// FluidVoice's provider check: one bare "test" message without tools.
+    @Test func connectionProbe() throws {
+        #expect(try #require(ChatRequest.parse(probeBody("test"))).isConnectionProbe)
+        #expect(try #require(ChatRequest.parse(probeBody("Test."))).isConnectionProbe)
+        #expect(try #require(ChatRequest.parse(probeBody("test", tools: 1))).isConnectionProbe == false)
+        #expect(try #require(ChatRequest.parse(probeBody("Avaa Safari"))).isConnectionProbe == false)
+        let command = try #require(ChatRequest.parse(chatBody(stream: false, last: .object(["role": .string("user"), "content": .string("test")]))))
+        #expect(command.isConnectionProbe == false)
+    }
 }
 
 @Suite struct JarvisAPITests {
