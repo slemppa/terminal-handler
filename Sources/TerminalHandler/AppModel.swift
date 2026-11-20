@@ -17,6 +17,8 @@ struct TerminalRow: Identifiable, Equatable {
 final class AppModel {
     private(set) var store = SessionStore()
     private(set) var rows: [TerminalRow] = []
+    /// The voice assistant run from FluidVoice's Command Mode.
+    let jarvis = JarvisController()
     /// Called when a new question is held, so the island can pop open.
     @ObservationIgnored var onQuestionArrived: (() -> Void)?
 
@@ -131,7 +133,7 @@ final class AppModel {
             }
             connections[request.id] = connection
             onQuestionArrived?()
-            let repo = row(forTTY: request.tty)?.repo ?? "Claude"
+            let repo = request.tty == SessionStore.jarvisTTY ? "Jarvis" : row(forTTY: request.tty)?.repo ?? "Claude"
             Notifier.announce(repo: repo, text: summary(of: request))
         }
         rebuildRows()
