@@ -29,7 +29,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSUIElement</key><true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Terminal Handler lukee Ghosttyn terminaalit ja siirtää sinut oikeaan välilehteen.</string>
+    <string>Terminal Handler lukee Ghosttyn terminaalit ja siirtää sinut oikeaan välilehteen. Jarvis-tila ohjaa appeja puhekomennoillasi.</string>
 </dict>
 </plist>
 PLIST
