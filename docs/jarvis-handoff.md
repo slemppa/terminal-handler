@@ -61,8 +61,8 @@ Sami painaa FluidVoicen Command Mode -näppäintä ja puhuu suomeksi. Transkript
 
 - FluidVoice 1.6.13 lähettää avaimen (Bearer), kutsuu `/models` ja tallentaessaan yhteystestin: yksi user-viesti "test" ilman työkaluja. Testiin vastataan nyt "OK" käynnistämättä Jarvista (`ChatRequest.isConnectionProbe`).
 - Command Mode lähettää koko chat-historian (esim. messages=6, tools=1) ja streamin.
-- FluidVoicen punainen "Command"-ikkuna on sen expanded command output -notch (`CommandModeService.showExpandedNotchIfNeeded`). Sitä ei saa pois asetuksilla koneella, jossa ei ole notchia: piiloasetus `NotchPresentationMode=minimal` toimii vain notch-näytöllä. Sami hyväksyi ikkunan; suljetaan Escillä. Jos häiritsee: PR FluidVoicelle (asetus ehdoksi tuohon funktioon).
-- `scripts/bundle.sh` ei käynnistänyt appia uudelleen asennuksen jälkeen; käynnistä `open ~/Applications/TerminalHandler.app`.
+- FluidVoicen punainen "Command"-ikkuna on sen expanded command output -notch (`CommandModeService.showExpandedNotchIfNeeded`). Asetuksilla sitä ei saa pois koneella, jossa ei ole notchia. Siksi TH sulkee sen itse (`FluidVoiceNotch`): FluidVoicen pyynnön jälkeen se painaa 4 sekunnin ajan Accessibility-rajapinnalla nappia, jonka tooltip on "Close (Escape)". Vaatii Käyttöapu-luvan. Pois päältä: `defaults write fi.slemppa.TerminalHandler jarvisCloseFluidVoiceWindow -bool false`.
+- `scripts/bundle.sh` käynnistää appin uudelleen asennuksen jälkeen.
 
 ## Avoimet riskit
 
