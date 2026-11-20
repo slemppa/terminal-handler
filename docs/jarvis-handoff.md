@@ -28,7 +28,7 @@ Sami painaa FluidVoicen Command Mode -näppäintä ja puhuu suomeksi. Transkript
 - **Puhe**
   - App ajaa `say -v Satu -r 195`.
   - `~/Jarvis/.claude/hooks/puhu.sh` ohittaa puheen, kun `JARVIS_FROM_APP` on asetettu, joten tuplapuhetta ei tule. Terminaalista käytettynä hook puhuu.
-  - Uusi komento, klikkaus, "Hiljaa" tai Esc (globaali vain puheen ajan) katkaisee puheen.
+  - Klikkaus, "Hiljaa" tai Esc (globaali vain puheen ajan) katkaisee puheen. Uusi komento ei katkaise: se menee jonoon ja alkaa, kun Satu on puhunut loppuun.
 - **Luvat**
   - App antaa lapselle `TH_JARVIS=1`. `th-hook` merkitsee hookit virtuaali-TTY:llä `jarvis` (`HookEnvelope.origin`).
   - Saarekkeessa näkyy "Saako Jarvis ajaa komennon?" ja Salli/Kiellä.

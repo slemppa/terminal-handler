@@ -65,8 +65,8 @@ final class JarvisController {
     func submit(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        stopSpeaking()
-        if turn != nil {
+        // Queued behind a running turn or Satu's answer: nothing said is cut off.
+        if turn != nil || speech != nil || !queued.isEmpty {
             queued.append(text)
             touch()
             return
@@ -87,6 +87,7 @@ final class JarvisController {
         self.speech = nil
         if speech.isRunning { speech.terminate() }
         if phase == .speaking { set(.idle) }
+        startNextIfQueued()
     }
 
     // MARK: Turn
@@ -159,11 +160,15 @@ final class JarvisController {
                 fail("Jarvis ei vastannut.")
             }
         }
-        if let next = queued.first {
-            queued.removeFirst()
-            stopSpeaking()
-            start(next)
-        }
+        // Satu finishes this answer first; the queued command starts when she falls silent.
+        startNextIfQueued()
+    }
+
+    /// Starts the next queued command once nothing runs and Satu is silent.
+    private func startNextIfQueued() {
+        guard turn == nil, speech == nil, let next = queued.first else { return }
+        queued.removeFirst()
+        start(next)
     }
 
     private var isThinking: Bool {
@@ -194,6 +199,7 @@ final class JarvisController {
                 guard let self, self.speech === process else { return }
                 self.speech = nil
                 if self.phase == .speaking { self.set(.idle) }
+                self.startNextIfQueued()
             }
         }
         do {
