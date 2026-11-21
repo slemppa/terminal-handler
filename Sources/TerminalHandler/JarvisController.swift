@@ -11,6 +11,9 @@ import THCore
 /// not interrupting: killing a turn halfway could leave an action (opening,
 /// moving, sending) half done, and a queued follow-up still sees the earlier
 /// turn's context because it resumes the same session.
+///
+/// A command from the phone carries a job id: its answer goes back to the
+/// phone (`remoteJobs`) to be spoken there, and Satu stays silent.
 @Observable
 final class JarvisController {
     enum Phase: Equatable {
@@ -26,12 +29,24 @@ final class JarvisController {
     private(set) var phase: Phase = .idle
     private(set) var transcript = ""
     private(set) var reply = ""
-    private(set) var queued: [String] = []
+    private(set) var queue: [Command] = []
+    var queued: [String] { queue.map(\.text) }
     /// When the island last had something to show for Jarvis.
     private(set) var updatedAt: Date?
 
     /// Called on every phase change, so the island can open, hold and close.
     @ObservationIgnored var onPhaseChange: ((Phase) -> Void)?
+
+    struct Command: Equatable {
+        var text: String
+        /// Set for a command from the phone.
+        var job: String?
+    }
+
+    /// Commands from the phone and their progress, read by the HTTP server.
+    @ObservationIgnored let remoteJobs = RemoteJobs()
+    /// The job of the command running now, or last run.
+    @ObservationIgnored private var currentJob: String?
 
     @ObservationIgnored private static let log = Logger(subsystem: "fi.slemppa.TerminalHandler", category: "jarvis")
     @ObservationIgnored private var turn: ClaudeTurn?
@@ -52,6 +67,8 @@ final class JarvisController {
     }
 
     var isBusy: Bool { turn != nil }
+    /// The phone's job while its command runs: Jarvis's questions go to the phone.
+    var currentRemoteJob: String? { turn != nil ? currentJob : nil }
     var isSpeaking: Bool { phase == .speaking }
     /// Worth showing in the island: active, or finished within the last few minutes.
     var isRecent: Bool {
@@ -62,21 +79,26 @@ final class JarvisController {
 
     // MARK: Commands
 
-    func submit(_ text: String) {
+    func submit(_ text: String, job: String? = nil) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else {
+            if let job { remoteJobs.update(job, .failed("En kuullut komentoa.")) }
+            return
+        }
+        let command = Command(text: text, job: job)
         // Queued behind a running turn or Satu's answer: nothing said is cut off.
-        if turn != nil || speech != nil || !queued.isEmpty {
-            queued.append(text)
+        if turn != nil || speech != nil || !queue.isEmpty {
+            queue.append(command)
             touch()
             return
         }
-        start(text)
+        start(command)
     }
 
     /// Stops the running turn and drops the queue.
     func cancel() {
-        queued = []
+        for job in queue.compactMap(\.job) { remoteJobs.update(job, .failed("Keskeytetty.")) }
+        queue = []
         if turn != nil { cancelled = true }
         turn?.cancel()
         stopSpeaking()
@@ -92,8 +114,11 @@ final class JarvisController {
 
     // MARK: Turn
 
-    private func start(_ text: String, forceFresh: Bool = false) {
+    private func start(_ command: Command, forceFresh: Bool = false) {
+        let text = command.text
         transcript = text
+        currentJob = command.job
+        if let job = command.job { remoteJobs.update(job, .working(nil)) }
         reply = ""
         sawAssistantText = false
         cancelled = false
@@ -132,12 +157,19 @@ final class JarvisController {
             touch()
         case .tool(let summary):
             set(.thinking(summary))
+            if let job = currentJob { remoteJobs.update(job, .working(summary)) }
         case .result(let text, let sessionID, let isError):
             if !isError || sawAssistantText { policy.turnEnded(sessionID: sessionID) }
             saveSession()
             if !text.isEmpty { reply = text }
             if isError && !sawAssistantText && text.isEmpty { return }
-            speak(reply)
+            if let job = currentJob {
+                // The phone speaks it.
+                remoteJobs.update(job, .done(reply))
+                set(.idle)
+            } else {
+                speak(reply)
+            }
         }
     }
 
@@ -149,11 +181,12 @@ final class JarvisController {
                 Self.log.info("resume failed, starting fresh: \(stderr, privacy: .public)")
                 policy.reset()
                 saveSession()
-                start(transcript, forceFresh: true)
+                start(Command(text: transcript, job: currentJob), forceFresh: true)
                 return
             }
             if cancelled {
                 reply = "Keskeytetty."
+                if let job = currentJob { remoteJobs.update(job, .failed(reply)) }
                 set(.idle)
             } else {
                 Self.log.error("claude exited \(status): \(stderr, privacy: .public)")
@@ -166,8 +199,8 @@ final class JarvisController {
 
     /// Starts the next queued command once nothing runs and Satu is silent.
     private func startNextIfQueued() {
-        guard turn == nil, speech == nil, let next = queued.first else { return }
-        queued.removeFirst()
+        guard turn == nil, speech == nil, let next = queue.first else { return }
+        queue.removeFirst()
         start(next)
     }
 
@@ -179,7 +212,12 @@ final class JarvisController {
     private func fail(_ message: String) {
         reply = message
         set(.failed(message))
-        speak("Jokin meni pieleen.", thenIdle: false)
+        if let job = currentJob {
+            remoteJobs.update(job, .failed(message))
+            startNextIfQueued()
+        } else {
+            speak("Jokin meni pieleen.", thenIdle: false)
+        }
     }
 
     // MARK: Speech

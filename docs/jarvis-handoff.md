@@ -64,6 +64,10 @@ Sami painaa FluidVoicen Command Mode -näppäintä ja puhuu suomeksi. Transkript
 - FluidVoicen punainen "Command"-ikkuna on sen expanded command output -notch (`CommandModeService.showExpandedNotchIfNeeded`). Asetuksilla sitä ei saa pois koneella, jossa ei ole notchia. Siksi TH sulkee sen itse (`FluidVoiceNotch`): FluidVoicen pyynnön jälkeen se painaa 4 sekunnin ajan Accessibility-rajapinnalla nappia, jonka tooltip on "Close (Escape)". Vaatii Käyttöapu-luvan. Pois päältä: `defaults write fi.slemppa.TerminalHandler jarvisCloseFluidVoiceWindow -bool false`.
 - `scripts/bundle.sh` käynnistää appin uudelleen asennuksen jälkeen.
 
+## Puhelin (21.11.)
+
+iPhonen pikakomento ajaa Jarvisia Tailscalen kautta: `/jarvis/command`, `/status` ja `/answer` (`RemoteJobs`, `RemoteAPI`). Vastauksen puhuu puhelin, ja Satu on silloin hiljaa. Lupakysymykset näkyvät sekä puhelimessa että saarekkeessa. Asennusohje: [`jarvis-puhelin.md`](jarvis-puhelin.md). Koodia ei ole vielä käännetty Macilla.
+
 ## Avoimet riskit
 
 1. **Viive ja hinta.** Jokainen vuoro lataa koko globaalin Claude-kontekstin (hookit, skillit, MCP:t). Ensimmäinen vuoro kesti 12–19 s ja maksoi noin 0,64 $ (77 k cache-creation-tokenia). Keventäminen onnistuisi esim. `--setting-sources project` ja eksplisiittinen th-hook-asetus, mutta silloin globaalit luvat jäävät pois.
