@@ -440,6 +440,9 @@ private func chatBody(stream: Bool, last: JSONValue) -> Data {
         #expect(prompt["options"]?.array?.compactMap(\.string) == ["Salli", "Kiellä"])
         let queued = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .queued)))
         #expect(queued["status"]?.string == "working")
+        #expect(queued["say"] == nil)
+        let working = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .working("Bash · ls"))))
+        #expect(working["say"] == nil)
         let unknown = try #require(JSONValue.parse(RemoteAPI.unknownJob("j")))
         #expect(unknown["status"]?.string == "failed")
     }

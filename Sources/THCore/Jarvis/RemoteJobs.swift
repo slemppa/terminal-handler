@@ -126,6 +126,8 @@ public final class RemoteJobs: Sendable {
 /// the same shape, so the Shortcut runs one loop:
 /// `status` "working" → POST /jarvis/status again; "prompt" → choose from
 /// `options` and POST /jarvis/answer; "done" or "failed" → speak `say`.
+/// `say` is missing exactly while the phone must ask again, so a Shortcut
+/// can branch on "has any value" without comparing text.
 public enum RemoteAPI {
     /// How long one request waits for something to happen. Below the
     /// Shortcut's own timeout for "Get Contents of URL".
@@ -161,11 +163,9 @@ public enum RemoteAPI {
         case .queued:
             fields["status"] = .string("working")
             fields["step"] = .string("Jonossa")
-            fields["say"] = .string("")
         case .working(let step):
             fields["status"] = .string("working")
             fields["step"] = .string(step ?? "")
-            fields["say"] = .string("")
         case .prompt(let prompt):
             fields["status"] = .string("prompt")
             fields["prompt_id"] = .string(prompt.id)
