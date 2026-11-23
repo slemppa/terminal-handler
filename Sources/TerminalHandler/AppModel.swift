@@ -202,9 +202,14 @@ final class AppModel {
         switch request.kind {
         case .permission(let tool, let detail):
             let what = detail.isEmpty ? tool : "\(tool): \(detail)"
+            // Claude's own one-line description reads better than the command.
+            let description = request.payload["tool_input"]?["description"]?.string?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let spoken = description.isEmpty ? "Jarvis pyytää lupaa: \(tool)." : "Jarvis pyytää lupaa: \(description)."
             return RemotePrompt(id: RemotePrompt.id(request: request.id, index: 0),
-                                question: "Saako Jarvis jatkaa? \(what)",
-                                options: [RemotePrompt.allow, RemotePrompt.deny])
+                                question: description.isEmpty ? "Saako Jarvis jatkaa?\n\(what)" : "\(description)\n\(what)",
+                                options: [RemotePrompt.allow, RemotePrompt.deny],
+                                spoken: spoken)
         case .question(let questions):
             let index = remoteChoices[request.id]?.count ?? 0
             guard index < questions.count else { return nil }

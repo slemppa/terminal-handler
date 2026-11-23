@@ -9,11 +9,15 @@ public struct RemotePrompt: Sendable, Equatable {
     public var id: String
     public var question: String
     public var options: [String]
+    /// What the phone reads aloud, when the question itself is not for the ear
+    /// (a shell command); nil reads the question.
+    public var spoken: String?
 
-    public init(id: String, question: String, options: [String]) {
+    public init(id: String, question: String, options: [String], spoken: String? = nil) {
         self.id = id
         self.question = question
         self.options = options
+        self.spoken = spoken
     }
 
     public static func id(request: UUID, index: Int) -> String { "\(request.uuidString)#\(index)" }
@@ -171,7 +175,7 @@ public enum RemoteAPI {
             fields["prompt_id"] = .string(prompt.id)
             fields["question"] = .string(prompt.question)
             fields["options"] = .array(prompt.options.map { .string($0) })
-            fields["say"] = .string(SpeechText.clean(prompt.question))
+            fields["say"] = .string(SpeechText.clean(prompt.spoken ?? prompt.question))
         case .done(let reply):
             let spoken = SpeechText.clean(reply)
             fields["status"] = .string("done")

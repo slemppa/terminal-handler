@@ -7,7 +7,9 @@ final class Listener {
     var onPartial: ((String) -> Void)?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "fi-FI"))
-    private let engine = AVAudioEngine()
+    /// A new engine for every listen: the input format changes after speech
+    /// playback or when headphones connect, and a stale one crashes installTap.
+    private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var silenceTimer: Timer?
@@ -18,11 +20,12 @@ final class Listener {
     static let silence: TimeInterval = 1.6
 
     enum Failure: LocalizedError {
-        case denied, unavailable
+        case denied, unavailable, noMicrophone
         var errorDescription: String? {
             switch self {
             case .denied: "Salli mikrofoni ja puheentunnistus asetuksista."
             case .unavailable: "Suomen puheentunnistus ei ole käytettävissä."
+            case .noMicrophone: "Mikrofoni ei ole käytettävissä. Yritä uudelleen."
             }
         }
     }
@@ -51,9 +54,21 @@ final class Listener {
         if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
         self.request = request
 
-        Self.installTap(on: engine.inputNode, request: request)
+        let engine = AVAudioEngine()
+        let format = engine.inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            self.request = nil
+            throw Failure.noMicrophone
+        }
+        Self.installTap(on: engine.inputNode, format: format, request: request)
+        self.engine = engine
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            stopAudio()
+            throw error
+        }
 
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
@@ -100,8 +115,11 @@ final class Listener {
     private func stopAudio() {
         silenceTimer?.invalidate()
         silenceTimer = nil
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
+        if let engine {
+            if engine.isRunning { engine.stop() }
+            engine.inputNode.removeTap(onBus: 0)
+        }
+        engine = nil
         request?.endAudio()
         task?.cancel()
         request = nil
@@ -109,8 +127,7 @@ final class Listener {
     }
 
     /// Audio and recognition callbacks run off the main thread.
-    nonisolated private static func installTap(on node: AVAudioInputNode, request: SFSpeechAudioBufferRecognitionRequest) {
-        let format = node.outputFormat(forBus: 0)
+    nonisolated private static func installTap(on node: AVAudioInputNode, format: AVAudioFormat, request: SFSpeechAudioBufferRecognitionRequest) {
         node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             request.append(buffer)
         }

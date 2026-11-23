@@ -135,7 +135,11 @@ final class JarvisController {
             return
         }
         Self.log.info("turn: resume=\(resume ?? "-", privacy: .public)")
-        let turn = ClaudeTurn(executable: claude, directory: directory, prompt: text, resume: resume) { [weak self] event in
+        // From the phone nobody watches the Mac: anything outside ~/Jarvis's
+        // allow list asks first (Salli/Kiellä on the phone), instead of auto
+        // mode approving what it judges low-risk.
+        let mode = command.job == nil ? Self.localPermissionMode : Self.remotePermissionMode
+        let turn = ClaudeTurn(executable: claude, directory: directory, prompt: text, resume: resume, permissionMode: mode) { [weak self] event in
             self?.handle(event)
         } onExit: { [weak self] status, stderr in
             self?.finished(status: status, stderr: stderr)
@@ -266,6 +270,16 @@ final class JarvisController {
         defaults.set(policy.lastTurnAt, forKey: Self.lastTurnKey)
     }
 
+    /// `jarvisPermissionMode` (FluidVoice on the Mac, default "auto") and
+    /// `jarvisRemotePermissionMode` (the phone, default "default").
+    static var localPermissionMode: String {
+        UserDefaults.standard.string(forKey: "jarvisPermissionMode") ?? "auto"
+    }
+
+    static var remotePermissionMode: String {
+        UserDefaults.standard.string(forKey: "jarvisRemotePermissionMode") ?? "default"
+    }
+
     /// `defaults write fi.slemppa.TerminalHandler jarvisClaudePath <path>` overrides.
     static func claudeExecutable() -> URL? {
         let home = NSHomeDirectory()
@@ -293,12 +307,12 @@ nonisolated final class ClaudeTurn: @unchecked Sendable {
     private let process = Process()
     private let buffers = TurnBuffers()
 
-    init(executable: URL, directory: URL, prompt: String, resume: String?,
+    init(executable: URL, directory: URL, prompt: String, resume: String?, permissionMode: String,
          onEvent: @escaping @Sendable @MainActor (ClaudeStreamEvent) -> Void,
          onExit: @escaping @Sendable @MainActor (Int32, String) -> Void) {
         process.executableURL = executable
         process.currentDirectoryURL = directory
-        var arguments = ["-p", "--permission-mode", "auto", "--output-format", "stream-json", "--verbose"]
+        var arguments = ["-p", "--permission-mode", permissionMode, "--output-format", "stream-json", "--verbose"]
         if let resume { arguments += ["--resume", resume] }
         process.arguments = arguments
         process.environment = Self.environment()
