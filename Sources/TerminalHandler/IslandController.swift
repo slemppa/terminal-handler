@@ -104,13 +104,15 @@ final class IslandController {
         NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.screens.first
     }
 
-    /// Keeps the pill fully visible and far enough from the sides for the open list.
+    /// Keeps the pill on screen and far enough from the sides for the open list.
+    /// The whole screen frame counts, menu bar included: the island is meant
+    /// to sit up there next to the notch.
     private func clamped(_ point: CGPoint) -> CGPoint {
-        guard let visible = screen(containing: point)?.visibleFrame else { return point }
+        guard let visible = screen(containing: point)?.frame else { return point }
         let half = IslandState.pillHeight / 2
         let inset = min(Self.edgeInset, visible.width / 2)
         return CGPoint(x: min(max(point.x, visible.minX + inset), visible.maxX - inset),
-                       y: min(max(point.y, visible.minY + half + 4), visible.maxY - half - 4))
+                       y: min(max(point.y, visible.minY + half + 4), visible.maxY - half))
     }
 
     /// Positions the panel so the pill sits on `anchor` and the list has room to open.
