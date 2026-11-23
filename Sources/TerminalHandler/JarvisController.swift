@@ -167,6 +167,7 @@ final class JarvisController {
             saveSession()
             if !text.isEmpty { reply = text }
             if isError && !sawAssistantText && text.isEmpty { return }
+            record(command: transcript, reply: reply)
             if let job = currentJob {
                 // The phone speaks it.
                 remoteJobs.update(job, .done(reply))
@@ -263,6 +264,16 @@ final class JarvisController {
     }
 
     private func touch() { updatedAt = .now }
+
+    /// Appends the exchange to ~/Jarvis/loki/<day>.md, Jarvis's conversation history.
+    private func record(command: String, reply: String) {
+        let log = ConversationLog(directory: Self.jarvisDirectory().appending(path: "loki", directoryHint: .isDirectory))
+        do {
+            try log.append(command: command, reply: reply, source: currentJob == nil ? .mac : .phone)
+        } catch {
+            Self.log.error("conversation log: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 
     private func saveSession() {
         let defaults = UserDefaults.standard

@@ -450,3 +450,50 @@ private func chatBody(stream: Bool, last: JSONValue) -> Data {
         #expect(unknown["status"]?.string == "failed")
     }
 }
+
+@Suite struct ConversationLogTests {
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Europe/Helsinki")!
+        return c
+    }
+
+    private func date(_ iso: String) -> Date { ISO8601DateFormatter().date(from: iso)! }
+
+    @Test func namesFilesByLocalDay() {
+        let log = ConversationLog(directory: URL(filePath: "/tmp"), calendar: calendar)
+        // 23.30 UTC is already the next day in Helsinki.
+        #expect(log.fileName(for: date("2026-11-23T23:30:00Z")) == "2026-11-24.md")
+        #expect(log.header(for: date("2026-11-23T10:00:00Z")) == "# Keskustelut 23.11.2026\n")
+    }
+
+    @Test func entryKeepsOneParagraph() {
+        let log = ConversationLog(directory: URL(filePath: "/tmp"), calendar: calendar)
+        let entry = log.entry(command: "Paljonko tilaa?", reply: "Tilaa on 39 gigaa.\n\n# Otsikko\nLoput.",
+                              source: .phone, at: date("2026-11-23T13:34:00Z"))
+        #expect(entry == "\n## 15.34 · puhelin\n**Sami:** Paljonko tilaa?\n**Jarvis:** Tilaa on 39 gigaa. / # Otsikko / Loput.\n")
+    }
+
+    @Test func appendsToDayFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "jarvis-log-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = ConversationLog(directory: dir, calendar: calendar)
+        let now = date("2026-11-23T08:00:00Z")
+        try log.append(command: "Avaa Safari", reply: "Avasin Safarin.", source: .mac, at: now)
+        try log.append(command: "Kiitos", reply: "", source: .phone, at: now.addingTimeInterval(60))
+        try log.append(command: "   ", reply: "ohitetaan", source: .mac, at: now)
+        let text = try String(contentsOf: dir.appending(path: "2026-11-23.md"), encoding: .utf8)
+        #expect(text == """
+        # Keskustelut 23.11.2026
+
+        ## 10.00 · Mac
+        **Sami:** Avaa Safari
+        **Jarvis:** Avasin Safarin.
+
+        ## 10.01 · puhelin
+        **Sami:** Kiitos
+        **Jarvis:** (ei vastausta)
+
+        """)
+    }
+}
