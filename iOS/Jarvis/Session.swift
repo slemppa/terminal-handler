@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-/// One spoken exchange at a time: listen → send → follow the job → speak.
+/// One exchange at a time: listen or type → send → follow the job → answer.
+/// A spoken command is answered aloud; a typed one is answered on screen only.
 @MainActor
 @Observable
 final class Session {
@@ -32,6 +33,8 @@ final class Session {
     private let speaker = Speaker()
     private var job: JobReply?
     private var run: Task<Void, Never>?
+    /// False while a typed message is in flight: the phone stays quiet.
+    private var aloud = true
 
     init() {
         listener.onPartial = { [weak self] text in self?.heard = text }
@@ -60,6 +63,24 @@ final class Session {
         run = Task { await exchange() }
     }
 
+    /// Sends a typed message. Returns false when nothing was sent.
+    @discardableResult
+    func send(_ typed: String) -> Bool {
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isBusy else { return false }
+        guard let client = Settings.client else {
+            phase = .failed(RemoteError.notConfigured.localizedDescription)
+            return false
+        }
+        run?.cancel()
+        aloud = false
+        heard = text
+        reply = ""
+        phase = .sending
+        run = Task { await follow({ try await client.command(text) }, client: client) }
+        return true
+    }
+
     func cancel() {
         run?.cancel()
         listener.cancel()
@@ -81,6 +102,7 @@ final class Session {
             phase = .failed(RemoteError.notConfigured.localizedDescription)
             return
         }
+        aloud = true
         heard = ""
         reply = ""
         phase = .listening
@@ -117,7 +139,7 @@ final class Session {
                 }
                 if current.isPrompt {
                     phase = .prompt(question: current.question ?? "", options: current.options ?? ["Salli", "Kiellä"])
-                    await speaker.speak(current.say ?? "")
+                    if aloud { await speaker.speak(current.say ?? "") }
                     return
                 }
                 await finish(current)
@@ -137,6 +159,10 @@ final class Session {
         let failed = reply.status == "failed"
         self.reply = reply.reply ?? reply.say ?? ""
         record(failed: failed, reply: self.reply)
+        guard aloud else {
+            phase = failed ? .failed(self.reply) : .idle
+            return
+        }
         phase = .speaking
         await speaker.speak(reply.say ?? self.reply)
         if phase == .speaking { phase = failed ? .failed(self.reply) : .idle }

@@ -3,6 +3,8 @@ import SwiftUI
 struct ContentView: View {
     let session: Session
     @State private var showSettings = false
+    @State private var draft = ""
+    @FocusState private var typing: Bool
 
     var body: some View {
         NavigationStack {
@@ -20,10 +22,14 @@ struct ContentView: View {
                     Button("Lopeta", role: .cancel) { session.cancel() }
                         .foregroundStyle(.secondary)
                 }
-                history
+                if !typing { history }
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { typing = false }
+            .safeAreaInset(edge: .bottom) { composer }
             .background(Color.black.ignoresSafeArea())
             .navigationTitle("Jarvis")
             .navigationBarTitleDisplayMode(.inline)
@@ -32,6 +38,45 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .onAppear { if Settings.client == nil { showSettings = true } }
+        }
+    }
+
+    /// Type instead of talking: the answer comes back as text, not speech.
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("Kirjoita viesti", text: $draft, axis: .vertical)
+                .lineLimit(1...5)
+                .focused($typing)
+                .submitLabel(.send)
+                .onChange(of: draft) { _, new in
+                    // Return sends; a multi-line field would otherwise add a newline.
+                    if new.last == "\n" {
+                        draft.removeLast()
+                        sendDraft()
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.1)))
+            Button(action: sendDraft) {
+                Image(systemName: "arrow.up.circle.fill").font(.system(size: 34))
+            }
+            .disabled(!canSend)
+            .accessibilityLabel("Lähetä")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.black)
+    }
+
+    private var canSend: Bool {
+        !session.isBusy && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func sendDraft() {
+        if session.send(draft) {
+            draft = ""
+            typing = false
         }
     }
 
@@ -150,7 +195,7 @@ struct PromptCard: View {
 extension Session.Phase {
     var label: String {
         switch self {
-        case .idle: "Paina ja puhu"
+        case .idle: "Paina ja puhu tai kirjoita"
         case .listening: "Kuuntelen…"
         case .sending: "Lähetän Macille…"
         case .working(let step): step.map { "Miettii · \($0)" } ?? "Miettii…"
