@@ -4,7 +4,9 @@ import THCore
 
 /// Jarvis endpoint settings, all in the app's user defaults:
 /// `jarvisPort` (default 8765), `jarvisAPIKey` (generated on first launch)
-/// and `jarvisRequireKey` (default true).
+/// and `jarvisRequireKey` (default true). The phone's routes:
+/// `jarvisRemoteEnabled` (default true) and `jarvisRemoteHosts` (extra
+/// Host names besides `*.ts.net`).
 nonisolated enum JarvisSettings {
     private static let listeningFlag = Mutex(false)
 
@@ -31,6 +33,17 @@ nonisolated enum JarvisSettings {
         let defaults = UserDefaults.standard
         let required = defaults.object(forKey: "jarvisRequireKey") as? Bool ?? true
         return required ? apiKey : nil
+    }
+
+    /// The phone's routes always need the key, whatever `jarvisRequireKey` says.
+    /// nil turns them off.
+    static var remoteKey: String? {
+        let enabled = UserDefaults.standard.object(forKey: "jarvisRemoteEnabled") as? Bool ?? true
+        return enabled ? apiKey : nil
+    }
+
+    static var remoteHosts: [String] {
+        UserDefaults.standard.stringArray(forKey: "jarvisRemoteHosts") ?? []
     }
 
     static var listening: Bool {

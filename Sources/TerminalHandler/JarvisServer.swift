@@ -6,19 +6,42 @@ import THCore
 /// 127.0.0.1 only. A chat request is answered at once with a short text and
 /// no tool calls, so FluidVoice's turn ends cleanly; the dictated text is
 /// handed to Jarvis, which does the work in the background.
+///
+/// The phone's routes (`/jarvis/command`, `/status`, `/answer`) come through
+/// `tailscale serve`, which forwards them to this same localhost port. Their
+/// answers are spoken on the phone, so Jarvis stays silent on the Mac.
 nonisolated final class JarvisServer: Sendable {
     private static let log = Logger(subsystem: "fi.slemppa.TerminalHandler", category: "jarvis-http")
     static let ackText = "Selvä, Jarvis hoitaa."
 
     let port: UInt16
     private let apiKey: @Sendable () -> String?
+    private let remoteKey: @Sendable () -> String?
+    private let remoteHosts: @Sendable () -> [String]
     private let onTranscript: @Sendable @MainActor (String) -> Void
+    private let jobs: RemoteJobs
+    private let onRemoteCommand: @Sendable @MainActor (String, String) -> Void
+    private let onRemoteAnswer: @Sendable @MainActor (String, String) -> Void
     private let requestLog: RequestLog
 
-    init(port: UInt16, apiKey: @escaping @Sendable () -> String?, onTranscript: @escaping @Sendable @MainActor (String) -> Void) {
+    /// `onRemoteCommand(text, jobID)` queues a phone command;
+    /// `onRemoteAnswer(promptID, choice)` answers what Jarvis asked.
+    init(port: UInt16,
+         apiKey: @escaping @Sendable () -> String?,
+         remoteKey: @escaping @Sendable () -> String?,
+         remoteHosts: @escaping @Sendable () -> [String],
+         jobs: RemoteJobs,
+         onTranscript: @escaping @Sendable @MainActor (String) -> Void,
+         onRemoteCommand: @escaping @Sendable @MainActor (String, String) -> Void,
+         onRemoteAnswer: @escaping @Sendable @MainActor (String, String) -> Void) {
         self.port = port
         self.apiKey = apiKey
+        self.remoteKey = remoteKey
+        self.remoteHosts = remoteHosts
+        self.jobs = jobs
         self.onTranscript = onTranscript
+        self.onRemoteCommand = onRemoteCommand
+        self.onRemoteAnswer = onRemoteAnswer
         requestLog = RequestLog(url: HookPaths.supportDirectory.appending(path: "jarvis-requests.log"))
     }
 
@@ -85,12 +108,15 @@ nonisolated final class JarvisServer: Sendable {
 
     private func respond(to request: HTTPRequest, fd: Int32) {
         let route = JarvisAPI.route(request)
-        if let rejection = JarvisAPI.check(request, route: route, apiKey: apiKey()) {
+        let key = route.isRemote ? remoteKey() : apiKey()
+        if let rejection = JarvisAPI.check(request, route: route, apiKey: key, remoteHosts: remoteHosts()) {
             requestLog.write(request, note: "rejected: \(rejection.message)")
             send(fd, HTTPResponse.error(status: rejection.status, message: rejection.message))
             return
         }
         switch route {
+        case .remoteCommand, .remoteStatus, .remoteAnswer:
+            respondRemote(to: request, route: route, fd: fd)
         case .notFound:
             requestLog.write(request, note: "404")
             send(fd, HTTPResponse.error(status: 404, message: "Not found"))
@@ -131,6 +157,48 @@ nonisolated final class JarvisServer: Sendable {
                 }
             }
         }
+    }
+
+    /// Each call waits up to `RemoteAPI.waitSeconds` for something the phone
+    /// must act on, then returns the job's state.
+    private func respondRemote(to request: HTTPRequest, route: JarvisAPI.Route, fd: Int32) {
+        let timeout = RemoteAPI.waitSeconds
+        switch route {
+        case .remoteCommand:
+            guard let text = RemoteAPI.commandText(request.body) else {
+                requestLog.write(request, note: "remote: no text")
+                send(fd, HTTPResponse.error(status: 400, message: "Expected {\"text\": \"…\"}"))
+                return
+            }
+            let id = jobs.create()
+            requestLog.write(request, note: "remote command \(id)")
+            let onRemoteCommand = onRemoteCommand
+            Task { @MainActor in onRemoteCommand(text, id) }
+            reply(fd, id: id, snapshot: jobs.wait(id, timeout: timeout))
+        case .remoteStatus:
+            guard let id = RemoteAPI.jobID(request.body) else {
+                send(fd, HTTPResponse.error(status: 400, message: "Expected {\"id\": \"…\"}"))
+                return
+            }
+            reply(fd, id: id, snapshot: jobs.wait(id, timeout: timeout))
+        case .remoteAnswer:
+            guard let answer = RemoteAPI.answer(request.body) else {
+                send(fd, HTTPResponse.error(status: 400, message: "Expected {\"id\", \"prompt_id\", \"choice\"}"))
+                return
+            }
+            requestLog.write(request, note: "remote answer \(answer.jobID)")
+            let before = jobs.snapshot(answer.jobID)?.version
+            let onRemoteAnswer = onRemoteAnswer
+            Task { @MainActor in onRemoteAnswer(answer.promptID, answer.choice) }
+            reply(fd, id: answer.jobID, snapshot: jobs.wait(answer.jobID, after: before, timeout: timeout))
+        default:
+            send(fd, HTTPResponse.error(status: 404, message: "Not found"))
+        }
+    }
+
+    private func reply(_ fd: Int32, id: String, snapshot: RemoteJobs.Snapshot?) {
+        let body = snapshot.map { RemoteAPI.body(jobID: id, state: $0.state) } ?? RemoteAPI.unknownJob(id)
+        send(fd, HTTPResponse.full(status: 200, body: body))
     }
 
     private func send(_ fd: Int32, _ data: Data) {

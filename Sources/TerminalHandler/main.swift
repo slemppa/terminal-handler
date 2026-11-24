@@ -20,9 +20,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.server = server
 
         let jarvis = model.jarvis
-        let jarvisServer = JarvisServer(port: JarvisSettings.port, apiKey: { JarvisSettings.requiredKey }) { transcript in
-            jarvis.submit(transcript)
-        }
+        let jarvisServer = JarvisServer(
+            port: JarvisSettings.port,
+            apiKey: { JarvisSettings.requiredKey },
+            remoteKey: { JarvisSettings.remoteKey },
+            remoteHosts: { JarvisSettings.remoteHosts },
+            jobs: jarvis.remoteJobs,
+            onTranscript: { transcript in jarvis.submit(transcript) },
+            onRemoteCommand: { text, job in jarvis.submit(text, job: job) },
+            onRemoteAnswer: { promptID, choice in model.remoteAnswer(promptID: promptID, choice: choice) })
         JarvisSettings.listening = jarvisServer.start()
         self.jarvisServer = jarvisServer
 

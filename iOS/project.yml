@@ -1,0 +1,32 @@
+name: JarvisPhone
+options:
+  bundleIdPrefix: fi.slemppa
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: ZKHJP4787K
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Jarvis:
+    type: application
+    platform: iOS
+    sources: [Jarvis]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fi.slemppa.jarvis
+        PRODUCT_NAME: Jarvis
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Jarvis
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Jarvis kuuntelee komentosi.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Puheesi muutetaan tekstiksi, jotta Jarvis ymmärtää komennon.
+        INFOPLIST_KEY_NSCameraUsageDescription: Kameralla luetaan API-avaimen QR-koodi.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES

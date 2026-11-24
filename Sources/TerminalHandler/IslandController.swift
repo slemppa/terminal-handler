@@ -104,17 +104,33 @@ final class IslandController {
         NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.screens.first
     }
 
-    /// Keeps the pill fully visible and far enough from the sides for the open list.
+    /// Keeps the pill on screen and far enough from the sides for the open list.
+    /// The whole screen frame counts, menu bar included: the island is meant
+    /// to sit up there next to the notch.
     private func clamped(_ point: CGPoint) -> CGPoint {
-        guard let visible = screen(containing: point)?.visibleFrame else { return point }
+        guard let visible = screen(containing: point)?.frame else { return point }
         let half = IslandState.pillHeight / 2
         let inset = min(Self.edgeInset, visible.width / 2)
         return CGPoint(x: min(max(point.x, visible.minX + inset), visible.maxX - inset),
-                       y: min(max(point.y, visible.minY + half + 4), visible.maxY - half - 4))
+                       y: min(max(point.y, visible.minY + half + 4), visible.maxY - half))
+    }
+
+    /// How close to the menu bar a drop has to land to be pulled into it.
+    private static let menuBarPull: CGFloat = 60
+
+    /// A drop near the top of the screen is pulled into the menu bar, centred in it.
+    private func snappedToMenuBar(_ point: CGPoint) -> CGPoint {
+        guard let screen = screen(containing: point) else { return point }
+        let barHeight = screen.frame.maxY - screen.visibleFrame.maxY
+        // An auto-hiding menu bar leaves no strip to sit in; use the usual height.
+        let bar = barHeight > 0 ? barHeight : 24
+        guard point.y > screen.frame.maxY - bar - Self.menuBarPull else { return point }
+        let half = IslandState.pillHeight / 2
+        return CGPoint(x: point.x, y: min(screen.frame.maxY - bar / 2, screen.frame.maxY - half))
     }
 
     /// Positions the panel so the pill sits on `anchor` and the list has room to open.
-    private func placePanel() {
+    private func placePanel(animated: Bool = false) {
         let size = Self.panelSize
         if let screen = screen(containing: anchor) {
             state.opensDownward = anchor.y > screen.visibleFrame.midY
@@ -122,7 +138,16 @@ final class IslandController {
         let half = IslandState.pillHeight / 2
         let pad: CGFloat = 12 // IslandView's vertical padding, room for the shadow
         let y = state.opensDownward ? anchor.y + half + pad - size.height : anchor.y - half - pad
-        panel.setFrame(CGRect(x: anchor.x - size.width / 2, y: y, width: size.width, height: size.height), display: true)
+        let frame = CGRect(x: anchor.x - size.width / 2, y: y, width: size.width, height: size.height)
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
     }
 
     /// The island's rect in screen coordinates, padded for easier hover.
@@ -171,8 +196,8 @@ final class IslandController {
     private func dragEnded() {
         dragStart = nil
         state.dragging = false
-        anchor = clamped(anchor)
-        placePanel()
+        anchor = clamped(snappedToMenuBar(anchor))
+        placePanel(animated: true)
         UserDefaults.standard.set([anchor.x, anchor.y], forKey: Self.anchorKey)
         insideSince = nil
     }

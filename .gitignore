@@ -8,3 +8,5 @@ xcuserdata/
 .swiftpm/
 .claude/scheduled_tasks.lock
 .worktrees/
+iOS/build/
+iOS/*.xcodeproj/

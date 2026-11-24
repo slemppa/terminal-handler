@@ -25,6 +25,8 @@ final class AppModel {
     @ObservationIgnored private var connections: [UUID: HookConnection] = [:]
     @ObservationIgnored private var gitCache: [String: GitInfo?] = [:]
     @ObservationIgnored private var pollTask: Task<Void, Never>?
+    /// The phone's answers so far to a Jarvis question with several parts.
+    @ObservationIgnored private var remoteChoices: [UUID: [String: String]] = [:]
 
     var pending: [PendingRequest] { store.pending }
     var waitingCount: Int { store.waitingCount }
@@ -81,6 +83,7 @@ final class AppModel {
     }
 
     private func rebuildRows() {
+        syncRemotePrompt()
         rows = store.terminals.map { t in
             let git = gitInfo(for: t.cwd)
             return TerminalRow(
@@ -176,6 +179,70 @@ final class AppModel {
             if answered == false { store.resolve(id, answered: false) }
         }
         if answered == false, !ids.isEmpty { rebuildRows() }
+    }
+
+    // MARK: Phone
+
+    /// While a phone command runs, what Jarvis waits on is mirrored to the
+    /// phone. The island shows it too; whichever answers first wins.
+    private func syncRemotePrompt() {
+        let held = Set(store.pending.map(\.id))
+        remoteChoices = remoteChoices.filter { held.contains($0.key) }
+        guard let job = jarvis.currentRemoteJob else { return }
+        let jobs = jarvis.remoteJobs
+        if let request = store.pending.first(where: { $0.tty == SessionStore.jarvisTTY }),
+           let prompt = remotePrompt(for: request) {
+            jobs.update(job, .prompt(prompt))
+        } else if case .prompt? = jobs.snapshot(job)?.state {
+            jobs.update(job, .working(nil))
+        }
+    }
+
+    private func remotePrompt(for request: PendingRequest) -> RemotePrompt? {
+        switch request.kind {
+        case .permission(let tool, let detail):
+            let what = detail.isEmpty ? tool : "\(tool): \(detail)"
+            // Claude's own one-line description reads better than the command.
+            let description = request.payload["tool_input"]?["description"]?.string?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let spoken = description.isEmpty ? "Jarvis pyytää lupaa: \(tool)." : "Jarvis pyytää lupaa: \(description)."
+            return RemotePrompt(id: RemotePrompt.id(request: request.id, index: 0),
+                                question: description.isEmpty ? "Saako Jarvis jatkaa?\n\(what)" : "\(description)\n\(what)",
+                                options: [RemotePrompt.allow, RemotePrompt.deny],
+                                spoken: spoken)
+        case .question(let questions):
+            let index = remoteChoices[request.id]?.count ?? 0
+            guard index < questions.count else { return nil }
+            let question = questions[index]
+            return RemotePrompt(id: RemotePrompt.id(request: request.id, index: index),
+                                question: question.question,
+                                options: question.options.map(\.label))
+        }
+    }
+
+    /// The phone answered `promptID`. Only Jarvis's own requests can be
+    /// answered this way, never a Ghostty session's.
+    func remoteAnswer(promptID: String, choice: String) {
+        guard let parsed = RemotePrompt.parse(promptID),
+              let request = store.pending.first(where: { $0.id == parsed.request }),
+              request.tty == SessionStore.jarvisTTY else { return }
+        let (id, index) = (parsed.request, parsed.index)
+        switch request.kind {
+        case .permission:
+            guard index == 0 else { return }
+            answer(id, with: RemotePrompt.isAllow(choice) ? .allow : .deny)
+        case .question(let questions):
+            var choices = remoteChoices[id] ?? [:]
+            guard index == choices.count, index < questions.count else { return }
+            choices[questions[index].question] = choice
+            if choices.count == questions.count {
+                remoteChoices[id] = nil
+                answer(id, with: .choices(choices))
+            } else {
+                remoteChoices[id] = choices
+                syncRemotePrompt()
+            }
+        }
     }
 
     func summary(of request: PendingRequest) -> String {

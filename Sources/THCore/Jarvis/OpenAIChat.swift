@@ -56,12 +56,27 @@ public enum JarvisAPI {
     public enum Route: Sendable, Equatable {
         case models
         case chatCompletions
+        /// The phone's commands (see `RemoteAPI`).
+        case remoteCommand
+        case remoteStatus
+        case remoteAnswer
         case notFound
+
+        /// Reachable from another device through `tailscale serve`.
+        public var isRemote: Bool {
+            switch self {
+            case .remoteCommand, .remoteStatus, .remoteAnswer: true
+            default: false
+            }
+        }
     }
 
     /// Accepts both "<base>/models" and "<base>/chat/completions", whatever the base.
     public static func route(_ request: HTTPRequest) -> Route {
         let path = request.path.hasSuffix("/") ? String(request.path.dropLast()) : request.path
+        if path.hasSuffix("/jarvis/command") { return .remoteCommand }
+        if path.hasSuffix("/jarvis/status") { return .remoteStatus }
+        if path.hasSuffix("/jarvis/answer") { return .remoteAnswer }
         if path.hasSuffix("/chat/completions") || path == "/chat/completions" { return .chatCompletions }
         if path.hasSuffix("/models") || path == "/models" { return .models }
         return .notFound
@@ -85,7 +100,7 @@ public enum JarvisAPI {
         public var message: String {
             switch self {
             case .browserOrigin: "Browser requests are not accepted"
-            case .badHost: "Only localhost is accepted"
+            case .badHost: "Host not accepted"
             case .unauthorized: "Invalid API key"
             case .notJSON: "Content-Type must be application/json"
             case .method: "Method not allowed"
@@ -97,14 +112,27 @@ public enum JarvisAPI {
     /// commands on the Mac through Jarvis. Browsers always send `Origin` on
     /// cross-site POSTs and need a preflight for `application/json`, and the
     /// Host check stops DNS rebinding. The API key is the last line.
-    public static func check(_ request: HTTPRequest, route: Route, apiKey: String?) -> Rejection? {
+    ///
+    /// The phone's routes also accept the Mac's Tailscale name (`*.ts.net`,
+    /// or one listed in `remoteHosts`), since `tailscale serve` forwards them
+    /// to this localhost port. They always need the key: pass it as `apiKey`
+    /// even when FluidVoice's key check is off; nil or empty rejects them.
+    public static func check(_ request: HTTPRequest, route: Route, apiKey: String?, remoteHosts: [String] = []) -> Rejection? {
         if request.header("origin") != nil || request.header("sec-fetch-site") != nil { return .browserOrigin }
         if let host = request.header("host") {
-            guard ["127.0.0.1", "localhost", "[::1]"].contains(hostName(host)) else { return .badHost }
+            let name = hostName(host)
+            let local = ["127.0.0.1", "localhost", "[::1]"].contains(name)
+            guard local || (route.isRemote && isRemoteHost(name, extra: remoteHosts)) else { return .badHost }
         }
         switch route {
         case .models, .notFound:
             return request.method == "GET" ? nil : .method
+        case .remoteCommand, .remoteStatus, .remoteAnswer:
+            guard request.method == "POST" else { return .method }
+            guard (request.header("content-type") ?? "").lowercased().contains("application/json") else { return .notJSON }
+            let given = bearerToken(request.header("authorization")) ?? request.header("x-api-key")
+            guard let apiKey, !apiKey.isEmpty, given == apiKey else { return .unauthorized }
+            return nil
         case .chatCompletions:
             guard request.method == "POST" else { return .method }
             guard (request.header("content-type") ?? "").lowercased().contains("application/json") else { return .notJSON }
@@ -114,6 +142,12 @@ public enum JarvisAPI {
             }
             return nil
         }
+    }
+
+    static func isRemoteHost(_ name: String, extra: [String]) -> Bool {
+        let name = name.hasSuffix(".") ? String(name.dropLast()) : name
+        if name.hasSuffix(".ts.net"), name.count > ".ts.net".count { return true }
+        return extra.contains { $0.lowercased() == name }
     }
 
     static func hostName(_ host: String) -> String {

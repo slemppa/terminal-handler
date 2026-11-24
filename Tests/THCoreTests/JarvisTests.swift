@@ -315,3 +315,185 @@ private func chatBody(stream: Bool, last: JSONValue) -> Data {
         #expect(store.apply(env).disposition == .releaseNow)
     }
 }
+
+@Suite struct RemoteRouteTests {
+    private func post(_ path: String, _ headers: [String: String]) -> HTTPRequest {
+        HTTPRequest(method: "POST", path: path, headers: headers, body: Data("{}".utf8))
+    }
+
+    private let tailnet = ["host": "mac.tail1234.ts.net", "content-type": "application/json", "authorization": "Bearer k1"]
+
+    @Test func routes() {
+        #expect(JarvisAPI.route(HTTPRequest(method: "POST", path: "/jarvis/command")) == .remoteCommand)
+        #expect(JarvisAPI.route(HTTPRequest(method: "POST", path: "/v1/jarvis/status/")) == .remoteStatus)
+        #expect(JarvisAPI.route(HTTPRequest(method: "POST", path: "/jarvis/answer")) == .remoteAnswer)
+        #expect(JarvisAPI.Route.remoteCommand.isRemote)
+        #expect(!JarvisAPI.Route.chatCompletions.isRemote)
+    }
+
+    @Test func tailscaleHostOnlyForPhoneRoutes() {
+        #expect(JarvisAPI.check(post("/jarvis/command", tailnet), route: .remoteCommand, apiKey: "k1") == nil)
+        #expect(JarvisAPI.check(post("/v1/chat/completions", tailnet), route: .chatCompletions, apiKey: "k1") == .badHost)
+        let local = tailnet.merging(["host": "127.0.0.1:8765"]) { $1 }
+        #expect(JarvisAPI.check(post("/jarvis/status", local), route: .remoteStatus, apiKey: "k1") == nil)
+    }
+
+    @Test func otherHostsAreRejectedUnlessListed() {
+        let evil = tailnet.merging(["host": "evil.example"]) { $1 }
+        #expect(JarvisAPI.check(post("/jarvis/command", evil), route: .remoteCommand, apiKey: "k1") == .badHost)
+        #expect(JarvisAPI.check(post("/jarvis/command", evil), route: .remoteCommand, apiKey: "k1", remoteHosts: ["Evil.example"]) == nil)
+        let bare = tailnet.merging(["host": ".ts.net"]) { $1 }
+        #expect(JarvisAPI.check(post("/jarvis/command", bare), route: .remoteCommand, apiKey: "k1") == .badHost)
+    }
+
+    @Test func phoneAlwaysNeedsTheKey() {
+        #expect(JarvisAPI.check(post("/jarvis/command", tailnet), route: .remoteCommand, apiKey: nil) == .unauthorized)
+        #expect(JarvisAPI.check(post("/jarvis/command", tailnet), route: .remoteCommand, apiKey: "") == .unauthorized)
+        let wrong = tailnet.merging(["authorization": "Bearer nope"]) { $1 }
+        #expect(JarvisAPI.check(post("/jarvis/command", wrong), route: .remoteCommand, apiKey: "k1") == .unauthorized)
+        let browser = tailnet.merging(["origin": "https://evil.example"]) { $1 }
+        #expect(JarvisAPI.check(post("/jarvis/command", browser), route: .remoteCommand, apiKey: "k1") == .browserOrigin)
+        #expect(JarvisAPI.check(HTTPRequest(method: "GET", path: "/jarvis/command", headers: tailnet), route: .remoteCommand, apiKey: "k1") == .method)
+    }
+}
+
+@Suite struct RemoteJobsTests {
+    @Test func lifecycle() throws {
+        let jobs = RemoteJobs()
+        let id = jobs.create()
+        #expect(jobs.snapshot(id) == .init(state: .queued, version: 0))
+        jobs.update(id, .working(nil))
+        jobs.update(id, .working(nil))
+        #expect(jobs.snapshot(id)?.version == 1)
+        jobs.update(id, .done("Valmista."))
+        jobs.update(id, .failed("myöhässä"))
+        #expect(jobs.snapshot(id)?.state == .done("Valmista."))
+        #expect(jobs.snapshot("job-nope") == nil)
+    }
+
+    @Test func waitReturnsWhenThePhoneHasWork() {
+        let jobs = RemoteJobs()
+        let id = jobs.create()
+        jobs.update(id, .working("Bash · ls"))
+        // Nothing to do yet: times out with the current state.
+        #expect(jobs.wait(id, timeout: 0.05, poll: 0.01)?.state == .working("Bash · ls"))
+        jobs.update(id, .done("Ok"))
+        #expect(jobs.wait(id, timeout: 5, poll: 0.01)?.state == .done("Ok"))
+        #expect(jobs.wait("job-nope", timeout: 0.01) == nil)
+    }
+
+    @Test func waitAfterAnswerSkipsTheOldPrompt() {
+        let jobs = RemoteJobs()
+        let id = jobs.create()
+        let prompt = RemotePrompt(id: "p#0", question: "Saako?", options: ["Salli", "Kiellä"])
+        jobs.update(id, .prompt(prompt))
+        let before = jobs.snapshot(id)?.version
+        #expect(jobs.wait(id, after: before, timeout: 0.05, poll: 0.01)?.state == .prompt(prompt))
+        jobs.update(id, .working(nil))
+        jobs.update(id, .done("Tehty."))
+        #expect(jobs.wait(id, after: before, timeout: 5, poll: 0.01)?.state == .done("Tehty."))
+    }
+
+    @Test func oldJobsAreForgotten() {
+        let jobs = RemoteJobs()
+        let old = jobs.create(now: Date(timeIntervalSince1970: 0))
+        _ = jobs.create(now: Date(timeIntervalSince1970: RemoteJobs.keepFor + 1))
+        #expect(jobs.snapshot(old) == nil)
+    }
+}
+
+@Suite struct RemoteAPITests {
+    @Test func parsesBodies() {
+        #expect(RemoteAPI.commandText(Data(#"{"text":"  Avaa Safari \n"}"#.utf8)) == "Avaa Safari")
+        #expect(RemoteAPI.commandText(Data(#"{"text":"  "}"#.utf8)) == nil)
+        #expect(RemoteAPI.jobID(Data(#"{"id":"job-1"}"#.utf8)) == "job-1")
+        #expect(RemoteAPI.answer(Data(#"{"id":"job-1","prompt_id":"p#0","choice":"Salli"}"#.utf8))
+                == .init(jobID: "job-1", promptID: "p#0", choice: "Salli"))
+        #expect(RemoteAPI.answer(Data(#"{"id":"job-1"}"#.utf8)) == nil)
+    }
+
+    @Test func promptIDsRoundTrip() throws {
+        let uuid = UUID()
+        let parsed = try #require(RemotePrompt.parse(RemotePrompt.id(request: uuid, index: 2)))
+        #expect(parsed.request == uuid)
+        #expect(parsed.index == 2)
+        #expect(RemotePrompt.parse("nonsense") == nil)
+    }
+
+    @Test func onlyAClearYesAllows() {
+        #expect(RemotePrompt.isAllow("Salli"))
+        #expect(RemotePrompt.isAllow(" kyllä."))
+        #expect(!RemotePrompt.isAllow("Kiellä"))
+        #expect(!RemotePrompt.isAllow(""))
+        #expect(!RemotePrompt.isAllow("salli ei"))
+    }
+
+    @Test func bodies() throws {
+        let done = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .done("**Valmis**, katso https://x.fi"))))
+        #expect(done["status"]?.string == "done")
+        #expect(done["say"]?.string == "Valmis, katso linkki")
+        let empty = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .done(""))))
+        #expect(empty["say"]?.string == "Valmis.")
+        let prompt = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .prompt(.init(id: "p#0", question: "Saako?", options: ["Salli", "Kiellä"])))))
+        #expect(prompt["status"]?.string == "prompt")
+        #expect(prompt["prompt_id"]?.string == "p#0")
+        #expect(prompt["options"]?.array?.compactMap(\.string) == ["Salli", "Kiellä"])
+        let spoken = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .prompt(.init(id: "p#0", question: "Bash: mkdir x", options: ["Salli"], spoken: "Jarvis pyytää lupaa: Luo kansio.")))))
+        #expect(spoken["say"]?.string == "Jarvis pyytää lupaa: Luo kansio.")
+        #expect(spoken["question"]?.string == "Bash: mkdir x")
+        let queued = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .queued)))
+        #expect(queued["status"]?.string == "working")
+        #expect(queued["say"] == nil)
+        let working = try #require(JSONValue.parse(RemoteAPI.body(jobID: "j", state: .working("Bash · ls"))))
+        #expect(working["say"] == nil)
+        let unknown = try #require(JSONValue.parse(RemoteAPI.unknownJob("j")))
+        #expect(unknown["status"]?.string == "failed")
+    }
+}
+
+@Suite struct ConversationLogTests {
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Europe/Helsinki")!
+        return c
+    }
+
+    private func date(_ iso: String) -> Date { ISO8601DateFormatter().date(from: iso)! }
+
+    @Test func namesFilesByLocalDay() {
+        let log = ConversationLog(directory: URL(filePath: "/tmp"), calendar: calendar)
+        // 23.30 UTC is already the next day in Helsinki.
+        #expect(log.fileName(for: date("2026-11-23T23:30:00Z")) == "2026-11-24.md")
+        #expect(log.header(for: date("2026-11-23T10:00:00Z")) == "# Keskustelut 23.11.2026\n")
+    }
+
+    @Test func entryKeepsOneParagraph() {
+        let log = ConversationLog(directory: URL(filePath: "/tmp"), calendar: calendar)
+        let entry = log.entry(command: "Paljonko tilaa?", reply: "Tilaa on 39 gigaa.\n\n# Otsikko\nLoput.",
+                              source: .phone, at: date("2026-11-23T13:34:00Z"))
+        #expect(entry == "\n## 15.34 · puhelin\n**Sami:** Paljonko tilaa?\n**Jarvis:** Tilaa on 39 gigaa. / # Otsikko / Loput.\n")
+    }
+
+    @Test func appendsToDayFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "jarvis-log-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = ConversationLog(directory: dir, calendar: calendar)
+        let now = date("2026-11-23T08:00:00Z")
+        try log.append(command: "Avaa Safari", reply: "Avasin Safarin.", source: .mac, at: now)
+        try log.append(command: "Kiitos", reply: "", source: .phone, at: now.addingTimeInterval(60))
+        try log.append(command: "   ", reply: "ohitetaan", source: .mac, at: now)
+        let text = try String(contentsOf: dir.appending(path: "2026-11-23.md"), encoding: .utf8)
+        #expect(text == """
+        # Keskustelut 23.11.2026
+
+        ## 10.00 · Mac
+        **Sami:** Avaa Safari
+        **Jarvis:** Avasin Safarin.
+
+        ## 10.01 · puhelin
+        **Sami:** Kiitos
+        **Jarvis:** (ei vastausta)
+
+        """)
+    }
+}
