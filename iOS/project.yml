@@ -1,11 +1,11 @@
 name: JarvisPhone
 options:
-  bundleIdPrefix: fi.slemppa
   deploymentTarget:
     iOS: "18.0"
 settings:
   base:
-    DEVELOPMENT_TEAM: ZKHJP4787K
+    # Your own Apple team and bundle id: run ./generate.sh, which sets these.
+    DEVELOPMENT_TEAM: ${JARVIS_TEAM_ID}
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "1.0"
@@ -17,7 +17,7 @@ targets:
     sources: [Jarvis]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: fi.slemppa.jarvis
+        PRODUCT_BUNDLE_IDENTIFIER: ${JARVIS_BUNDLE_ID}
         PRODUCT_NAME: Jarvis
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
