@@ -15,4 +15,13 @@ enum Notifier {
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
+
+    /// Once per viewing, so Sami knows the phone is looking.
+    static func screenShareStarted() {
+        let content = UNMutableNotificationContent()
+        content.title = "Ruutu jaettu puhelimeen"
+        content.body = "Jarvis-sovellus katsoo ja ohjaa Macin näyttöä. Sulje se saarekkeen valikosta."
+        let request = UNNotificationRequest(identifier: "screen-share", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
 }

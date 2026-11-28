@@ -6,7 +6,8 @@ import THCore
 /// `jarvisPort` (default 8765), `jarvisAPIKey` (generated on first launch)
 /// and `jarvisRequireKey` (default true). The phone's routes:
 /// `jarvisRemoteEnabled` (default true) and `jarvisRemoteHosts` (extra
-/// Host names besides `*.ts.net`).
+/// Host names besides `*.ts.net`). The phone's screen view:
+/// `jarvisScreenEnabled` (default false).
 nonisolated enum JarvisSettings {
     private static let listeningFlag = Mutex(false)
 
@@ -40,6 +41,13 @@ nonisolated enum JarvisSettings {
     static var remoteKey: String? {
         let enabled = UserDefaults.standard.object(forKey: "jarvisRemoteEnabled") as? Bool ?? true
         return enabled ? apiKey : nil
+    }
+
+    /// The phone may see and control the screen. Off by default: the same
+    /// key then gives full control of the Mac, not just Jarvis.
+    static var screenEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "jarvisScreenEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "jarvisScreenEnabled") }
     }
 
     static var remoteHosts: [String] {

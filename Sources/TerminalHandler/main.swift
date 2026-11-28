@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             apiKey: { JarvisSettings.requiredKey },
             remoteKey: { JarvisSettings.remoteKey },
             remoteHosts: { JarvisSettings.remoteHosts },
+            screenEnabled: { JarvisSettings.screenEnabled },
+            onScreenFrame: { model.screenShare.seen() },
             jobs: jarvis.remoteJobs,
             onTranscript: { transcript in jarvis.submit(transcript) },
             onRemoteCommand: { text, job in jarvis.submit(text, job: job) },

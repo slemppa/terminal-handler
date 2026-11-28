@@ -18,6 +18,8 @@ nonisolated final class JarvisServer: Sendable {
     private let apiKey: @Sendable () -> String?
     private let remoteKey: @Sendable () -> String?
     private let remoteHosts: @Sendable () -> [String]
+    private let screenEnabled: @Sendable () -> Bool
+    private let onScreenFrame: @Sendable @MainActor () -> Void
     private let onTranscript: @Sendable @MainActor (String) -> Void
     private let jobs: RemoteJobs
     private let onRemoteCommand: @Sendable @MainActor (String, String) -> Void
@@ -26,10 +28,13 @@ nonisolated final class JarvisServer: Sendable {
 
     /// `onRemoteCommand(text, jobID)` queues a phone command;
     /// `onRemoteAnswer(promptID, choice)` answers what Jarvis asked.
+    /// `onScreenFrame` runs on every frame the phone fetches.
     init(port: UInt16,
          apiKey: @escaping @Sendable () -> String?,
          remoteKey: @escaping @Sendable () -> String?,
          remoteHosts: @escaping @Sendable () -> [String],
+         screenEnabled: @escaping @Sendable () -> Bool,
+         onScreenFrame: @escaping @Sendable @MainActor () -> Void,
          jobs: RemoteJobs,
          onTranscript: @escaping @Sendable @MainActor (String) -> Void,
          onRemoteCommand: @escaping @Sendable @MainActor (String, String) -> Void,
@@ -38,6 +43,8 @@ nonisolated final class JarvisServer: Sendable {
         self.apiKey = apiKey
         self.remoteKey = remoteKey
         self.remoteHosts = remoteHosts
+        self.screenEnabled = screenEnabled
+        self.onScreenFrame = onScreenFrame
         self.jobs = jobs
         self.onTranscript = onTranscript
         self.onRemoteCommand = onRemoteCommand
@@ -109,14 +116,24 @@ nonisolated final class JarvisServer: Sendable {
     private func respond(to request: HTTPRequest, fd: Int32) {
         let route = JarvisAPI.route(request)
         let key = route.isRemote ? remoteKey() : apiKey()
-        if let rejection = JarvisAPI.check(request, route: route, apiKey: key, remoteHosts: remoteHosts()) {
-            requestLog.write(request, note: "rejected: \(rejection.message)")
+        if let rejection = JarvisAPI.check(request, route: route, apiKey: key, remoteHosts: remoteHosts(),
+                                           screenEnabled: screenEnabled()) {
+            if route.isScreen {
+                // Never the body: it may hold typed text.
+                requestLog.write("\(request.method) \(request.path)  [rejected: \(rejection.message)]\n")
+            } else {
+                requestLog.write(request, note: "rejected: \(rejection.message)")
+            }
             send(fd, HTTPResponse.error(status: rejection.status, message: rejection.message))
             return
         }
         switch route {
         case .remoteCommand, .remoteStatus, .remoteAnswer:
             respondRemote(to: request, route: route, fd: fd)
+        case .screenFrame:
+            respondFrame(to: request, fd: fd)
+        case .screenInput:
+            respondInput(to: request, fd: fd)
         case .notFound:
             requestLog.write(request, note: "404")
             send(fd, HTTPResponse.error(status: 404, message: "Not found"))
@@ -194,6 +211,36 @@ nonisolated final class JarvisServer: Sendable {
         default:
             send(fd, HTTPResponse.error(status: 404, message: "Not found"))
         }
+    }
+
+    /// Frames are not logged: the phone asks for several a second.
+    private func respondFrame(to request: HTTPRequest, fd: Int32) {
+        switch ScreenShare.capture(ScreenAPI.frameRequest(request.body)) {
+        case .success(let frame):
+            let onScreenFrame = onScreenFrame
+            Task { @MainActor in onScreenFrame() }
+            var out = HTTPResponse.head(status: 200, headers: ScreenAPI.frameHeaders(
+                displayWidth: frame.displayWidth, displayHeight: frame.displayHeight, bytes: frame.jpeg.count))
+            out.append(frame.jpeg)
+            send(fd, out)
+        case .failure(let failure):
+            requestLog.write("\(request.method) \(request.path)  [frame failed: \(failure.message)]\n")
+            send(fd, HTTPResponse.error(status: failure.status, message: failure.message))
+        }
+    }
+
+    private func respondInput(to request: HTTPRequest, fd: Int32) {
+        guard let input = ScreenInput.parse(request.body) else {
+            requestLog.write("\(request.method) \(request.path)  [screen input: bad body]\n")
+            send(fd, HTTPResponse.error(status: 400, message: "Unknown screen input"))
+            return
+        }
+        requestLog.write("\(request.method) \(request.path)  [screen input: \(input.logDescription)]\n")
+        if let failure = ScreenShare.perform(input) {
+            send(fd, HTTPResponse.error(status: failure.status, message: failure.message))
+            return
+        }
+        send(fd, HTTPResponse.full(status: 200, body: JSONValue.object(["ok": .bool(true)]).encoded()))
     }
 
     private func reply(_ fd: Int32, id: String, snapshot: RemoteJobs.Snapshot?) {

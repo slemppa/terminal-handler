@@ -85,6 +85,14 @@ private struct PillContent: View {
             if model.jarvis.phase != .idle {
                 JarvisPillBadge(jarvis: model.jarvis).padding(.leading, 3)
             }
+            if model.screenShare.active {
+                Image(systemName: "iphone.radiowaves.left.and.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.red)
+                    .padding(.leading, 3)
+                    .help("Puhelin katsoo ja ohjaa ruutua")
+                    .accessibilityLabel("Ruutu jaettu puhelimeen")
+            }
             if model.waitingCount > 0 {
                 Text("\(model.waitingCount) odottaa")
                     .font(.system(size: 11, weight: .semibold))
@@ -393,6 +401,12 @@ struct IslandMenu: View {
             if JarvisSettings.listening {
                 Button("Kopioi osoite (\(JarvisSettings.baseURL))") { JarvisSettings.copyBaseURL() }
                 Button("Kopioi API-avain") { JarvisSettings.copyKey() }
+                Toggle("Salli ruudun ohjaus puhelimesta", isOn: Binding(
+                    get: { JarvisSettings.screenEnabled },
+                    set: { on in
+                        JarvisSettings.screenEnabled = on
+                        if on { ScreenShare.askForPermissions() }
+                    }))
             } else {
                 Text("Portti \(String(JarvisSettings.port)) on varattu")
             }

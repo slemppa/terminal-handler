@@ -27,6 +27,7 @@ targets:
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Puheesi muutetaan tekstiksi, jotta Jarvis ymmärtää komennon.
         INFOPLIST_KEY_NSCameraUsageDescription: Kameralla luetaan API-avaimen QR-koodi.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        # Landscape only while the Mac's screen is shown (AppDelegate).
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_UIUserInterfaceStyle: Dark
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES

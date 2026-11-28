@@ -19,6 +19,8 @@ final class AppModel {
     private(set) var rows: [TerminalRow] = []
     /// The voice assistant run from FluidVoice's Command Mode.
     let jarvis = JarvisController()
+    /// Whether the phone is looking at the screen right now.
+    let screenShare = ScreenShareMonitor()
     /// Called when a new question is held, so the island can pop open.
     @ObservationIgnored var onQuestionArrived: (() -> Void)?
 

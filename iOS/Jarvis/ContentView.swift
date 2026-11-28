@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    let session: Session
+    @Bindable var session: Session
     @State private var showSettings = false
     @State private var draft = ""
     @FocusState private var typing: Bool
@@ -34,9 +34,16 @@ struct ContentView: View {
             .navigationTitle("Jarvis")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { session.showScreen = true } label: { Image(systemName: "display") }
+                        .accessibilityLabel("Macin ruutu")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
+            .fullScreenCover(isPresented: $session.showScreen) { ScreenView() }
             .onAppear { if Settings.client == nil { showSettings = true } }
         }
     }

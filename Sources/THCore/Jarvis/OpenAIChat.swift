@@ -60,14 +60,22 @@ public enum JarvisAPI {
         case remoteCommand
         case remoteStatus
         case remoteAnswer
+        /// The phone's screen view (see `ScreenAPI`).
+        case screenFrame
+        case screenInput
         case notFound
 
         /// Reachable from another device through `tailscale serve`.
         public var isRemote: Bool {
             switch self {
-            case .remoteCommand, .remoteStatus, .remoteAnswer: true
+            case .remoteCommand, .remoteStatus, .remoteAnswer, .screenFrame, .screenInput: true
             default: false
             }
+        }
+
+        /// Sees or controls the Mac's screen: off unless turned on separately.
+        public var isScreen: Bool {
+            self == .screenFrame || self == .screenInput
         }
     }
 
@@ -77,6 +85,8 @@ public enum JarvisAPI {
         if path.hasSuffix("/jarvis/command") { return .remoteCommand }
         if path.hasSuffix("/jarvis/status") { return .remoteStatus }
         if path.hasSuffix("/jarvis/answer") { return .remoteAnswer }
+        if path.hasSuffix("/jarvis/screen/frame") { return .screenFrame }
+        if path.hasSuffix("/jarvis/screen/input") { return .screenInput }
         if path.hasSuffix("/chat/completions") || path == "/chat/completions" { return .chatCompletions }
         if path.hasSuffix("/models") || path == "/models" { return .models }
         return .notFound
@@ -88,6 +98,7 @@ public enum JarvisAPI {
         case unauthorized
         case notJSON
         case method
+        case screenOff
 
         public var status: Int {
             switch self {
@@ -104,6 +115,7 @@ public enum JarvisAPI {
             case .unauthorized: "Invalid API key"
             case .notJSON: "Content-Type must be application/json"
             case .method: "Method not allowed"
+            case .screenOff: "Screen sharing is turned off on the Mac"
             }
         }
     }
@@ -117,7 +129,10 @@ public enum JarvisAPI {
     /// or one listed in `remoteHosts`), since `tailscale serve` forwards them
     /// to this localhost port. They always need the key: pass it as `apiKey`
     /// even when FluidVoice's key check is off; nil or empty rejects them.
-    public static func check(_ request: HTTPRequest, route: Route, apiKey: String?, remoteHosts: [String] = []) -> Rejection? {
+    /// The screen routes also need `screenEnabled`; the key is checked
+    /// first, so a caller without it never learns whether sharing is on.
+    public static func check(_ request: HTTPRequest, route: Route, apiKey: String?, remoteHosts: [String] = [],
+                             screenEnabled: Bool = false) -> Rejection? {
         if request.header("origin") != nil || request.header("sec-fetch-site") != nil { return .browserOrigin }
         if let host = request.header("host") {
             let name = hostName(host)
@@ -127,11 +142,12 @@ public enum JarvisAPI {
         switch route {
         case .models, .notFound:
             return request.method == "GET" ? nil : .method
-        case .remoteCommand, .remoteStatus, .remoteAnswer:
+        case .remoteCommand, .remoteStatus, .remoteAnswer, .screenFrame, .screenInput:
             guard request.method == "POST" else { return .method }
             guard (request.header("content-type") ?? "").lowercased().contains("application/json") else { return .notJSON }
             let given = bearerToken(request.header("authorization")) ?? request.header("x-api-key")
             guard let apiKey, !apiKey.isEmpty, given == apiKey else { return .unauthorized }
+            if route.isScreen, !screenEnabled { return .screenOff }
             return nil
         case .chatCompletions:
             guard request.method == "POST" else { return .method }

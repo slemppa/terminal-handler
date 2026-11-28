@@ -68,6 +68,36 @@ Jokainen pyyntö odottaa korkeintaan 25 s. 40 kierrosta riittää siis noin 16 m
 
 Nimeä pikakomento "Jarvis". Sen jälkeen "Hei Siri, Jarvis" käynnistää sen. Kun pikakomento ajetaan Sirin kautta, Siri lukee myös Salli/Kiellä-vaihtoehdot ja voit vastata äänellä.
 
+## Macin ruutu puhelimessa
+
+Jarvis-sovelluksessa voit katsoa ja ohjata Macin näyttöä: napauta yläkulman näyttökuvaketta, sano "näytä ruutu" tai käske Siriä: "Jarvis, näytä ruutu". Erillistä VNC-sovellusta ei tarvita, eikä Macin Näytön jakamista tarvitse laittaa päälle. Yhteys kulkee samaa Tailscale-osoitetta pitkin ja samalla API-avaimella kuin komennot.
+
+Ohjaus on oletuksena **pois päältä**, koska API-avain antaa sen jälkeen täyden hiiren ja näppäimistön hallinnan. Laita se päälle Macilla:
+
+1. Saareke → oikea klikkaus → Jarvis → **Salli ruudun ohjaus puhelimesta**.
+2. macOS kysyy kaksi lupaa Terminal Handlerille. Salli molemmat:
+   - **Näytön ja järjestelmän äänen tallennus**: tarvitaan, jotta ruudusta saadaan kuva.
+   - **Esteettömyys**: tarvitaan, jotta klikkaukset ja näppäimet menevät perille. Lupa on jo olemassa, jos FluidVoicen ikkunan sulkeminen toimii.
+3. Käynnistä Terminal Handler uudelleen, jos macOS pyytää sitä Näytön tallennus -luvan jälkeen.
+
+Kun puhelin katsoo ruutua, saarekkeessa näkyy punainen puhelinkuvake, macOS näyttää valikkorivillä oman tallennusmerkkinsä, ja ensimmäisestä kuvasta tulee ilmoitus. Ohjauksen saa pois samasta valikosta.
+
+Puhelimessa:
+
+| Ele | Macilla |
+|---|---|
+| Napautus | Klikkaus |
+| Kaksi napautusta samaan kohtaan | Tuplaklikkaus |
+| Pitkä painallus | Oikea klikkaus |
+| Nipistys | Zoomaa kuvaa (vain puhelimessa) |
+| Vieritä-tila, veto | Vieritys |
+| Vedä-tila, veto | Hiiren veto, esim. ikkunan siirto tai tekstin valinta |
+| Näppäimistönappi | iPhonen näppäimistö, sanelu mukaan lukien. Teksti menee Macille sellaisenaan, myös ä ja ö. |
+| ⌘ ⇧ ⌥ ⌃ | Pidetään pohjassa seuraavan näppäimen tai kirjaimen ajan (⌘ ja sitten C = ⌘C) |
+| ⌘-valikko | Valmiit pikanäppäimet: Spotlight, appien vaihto, kopioi, liitä… |
+
+Käännä puhelin vaakaan, niin ruutu on isompi. Vain ensisijainen näyttö näkyy.
+
 ## Rajapinta
 
 Kaikki kutsut ovat POST-pyyntöjä, JSON-runkoisia ja vaativat `Authorization: Bearer <avain>` -otsakkeen. Avain vaaditaan aina, vaikka `jarvisRequireKey` olisi pois päältä.
@@ -77,6 +107,10 @@ Kaikki kutsut ovat POST-pyyntöjä, JSON-runkoisia ja vaativat `Authorization: B
 | `/jarvis/command` | `{"text": "…"}` |
 | `/jarvis/status` | `{"id": "job-…"}` |
 | `/jarvis/answer` | `{"id": "job-…", "prompt_id": "…", "choice": "Salli"}` |
+| `/jarvis/screen/frame` | `{"max_side": 1600, "quality": 0.5}`. Vastaus on JPEG, ja otsakkeet `X-Screen-Width` ja `X-Screen-Height` kertovat näytön koon pisteinä. |
+| `/jarvis/screen/input` | Yksi näistä: `{"tap": [x, y], "clicks": 1, "button": "left"}`, `{"move": [x, y]}`, `{"drag": {"from": [x, y], "to": [x, y]}}`, `{"scroll": [x, y], "dx": 0, "dy": 120}`, `{"text": "…"}` tai `{"key": "c", "modifiers": ["command"]}` |
+
+Ruudun koordinaatit ovat osuuksia näytöstä (0…1, origo vasemmassa yläkulmassa). Vierityksessä `dx` ja `dy` ovat pisteitä, ja sisältö liikkuu niiden suuntaan kuin sormella vetäessä. Ruutureitit vastaavat 403, kun ohjaus on pois päältä. Kirjoitettua tekstiä ei koskaan kirjata lokiin.
 
 Vastauksen kentät:
 - `id`
@@ -91,5 +125,6 @@ Luvan antaa vain selvä kyllä: `Salli`, `kyllä`, `joo`, `allow` tai `yes`. Kai
 ## Asetukset
 
 - `defaults write fi.slemppa.TerminalHandler jarvisRemoteEnabled -bool false` sulkee puhelinreitit.
+- `defaults write fi.slemppa.TerminalHandler jarvisScreenEnabled -bool true` on sama kuin valikon **Salli ruudun ohjaus puhelimesta**.
 - `defaults write fi.slemppa.TerminalHandler jarvisRemoteHosts -array oma.nimi`: muut Host-nimet, jotka sallitaan `*.ts.net`-nimien lisäksi.
 - Pyynnöt kirjataan tiedostoon `~/Library/Application Support/TerminalHandler/jarvis-requests.log`.

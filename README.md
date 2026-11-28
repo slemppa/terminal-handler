@@ -47,7 +47,7 @@ Remove the hooks from the same menu.
 
 Design notes: [`docs/superpowers/specs`](docs/superpowers/specs).
 
-Jarvis from an iPhone (Siri Shortcut over Tailscale): [`docs/jarvis-puhelin.md`](docs/jarvis-puhelin.md).
+Jarvis from an iPhone (Siri Shortcut or the native app over Tailscale, including viewing and controlling the Mac's screen from the phone): [`docs/jarvis-puhelin.md`](docs/jarvis-puhelin.md).
 
 ## Development
 
