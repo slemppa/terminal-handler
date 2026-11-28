@@ -13,7 +13,7 @@ extension Dot {
         case .blue: Color(red: 0.04, green: 0.52, blue: 1.0)
         case .green: Color(red: 0.19, green: 0.82, blue: 0.35)
         case .dimGreen: Color(red: 0.19, green: 0.82, blue: 0.35).opacity(0.45)
-        case .grey: Color(white: 0.32)
+        case .grey: Color.secondary
         }
     }
 }
@@ -30,6 +30,41 @@ struct DotView: View {
     }
 }
 
+/// The island's outline. Docked in the menu bar its top corners flare outwards
+/// into the top edge, the way the hardware notch meets the bezel, so it reads
+/// as part of the Mac rather than a window stuck on top of it.
+nonisolated struct IslandShape: Shape {
+    /// Width of the outward curve at each top corner; 0 when floating.
+    var flare: CGFloat
+    var topRadius: CGFloat
+    var bottomRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+        get { .init(flare, .init(topRadius, bottomRadius)) }
+        set { (flare, topRadius, bottomRadius) = (newValue.first, newValue.second.first, newValue.second.second) }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let body = rect.insetBy(dx: flare, dy: 0)
+        var path = UnevenRoundedRectangle(
+            cornerRadii: .init(topLeading: topRadius, bottomLeading: bottomRadius,
+                               bottomTrailing: bottomRadius, topTrailing: topRadius),
+            style: .continuous
+        ).path(in: body)
+        guard flare > 0.01 else { return path }
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: body.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: body.minX, y: rect.minY + flare))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY), control: CGPoint(x: body.minX, y: rect.minY))
+        path.closeSubpath()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: body.maxX, y: rect.minY + flare), control: CGPoint(x: body.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: body.maxX, y: rect.minY))
+        path.closeSubpath()
+        return path
+    }
+}
+
 struct IslandView: View {
     let model: AppModel
     let state: IslandState
@@ -38,6 +73,15 @@ struct IslandView: View {
 
     private var radius: CGFloat { state.expanded ? 22 : IslandState.pillHeight / 2 }
     private var edge: UnitPoint { state.opensDownward ? .top : .bottom }
+    /// Lifted while dragged, like picking something up off the desk.
+    private var shadowRadius: CGFloat { state.expanded ? 18 : state.dragging ? 14 : state.docked ? 3 : 6 }
+    private var shadowOpacity: CGFloat { state.expanded ? 0.2 : state.dragging ? 0.25 : 0.1 }
+    private static let flare: CGFloat = 8
+    private var flare: CGFloat { state.docked ? Self.flare : 0 }
+    /// Docked in the menu bar the island hangs from the top edge like a notch.
+    private var shape: IslandShape {
+        IslandShape(flare: flare, topRadius: state.docked ? 0 : radius, bottomRadius: radius)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,19 +97,32 @@ struct IslandView: View {
                         .transition(.opacity)
                 }
             }
-            .background(.black, in: .rect(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
-            .shadow(color: .black.opacity(state.expanded ? 0.35 : 0.25), radius: state.expanded ? 18 : 6, y: state.expanded ? 8 : 2)
-            .scaleEffect(state.dragging ? 1.06 : 1)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { state.islandFrame = $0 }
+            .padding(.horizontal, flare)
+            // Liquid Glass brings its own rim, highlights and Reduce Transparency fallback.
+            // A dark tint gives it body over any wallpaper, like a system HUD,
+            // so it can be found at a glance and the dots keep their contrast.
+            .background(.black.opacity(0.6), in: shape)
+            .glassEffect(.regular, in: shape)
+            .environment(\.colorScheme, .dark)
+            .shadow(color: .black.opacity(shadowOpacity), radius: shadowRadius, y: shadowRadius / 2.5)
+            .scaleEffect(state.dragging ? 1.06 : 1, anchor: state.docked ? .top : .center)
+            // A new question nudges the island, so it is noticed from the corner of the eye.
+            .phaseAnimator([1.0, 1.08, 1.0], trigger: state.attention) { content, scale in
+                content.scaleEffect(reduceMotion ? 1 : scale, anchor: state.docked ? .top : .center)
+            } animation: { _ in .spring(response: 0.22, dampingFraction: 0.55) }
+            .offset(x: state.expanded ? 0 : state.shiftX)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                state.islandFrame = frame
+                if !state.expanded && !state.dragging { state.pillWidth = frame.width }
+            }
             .contextMenu { IslandMenu(model: model) }
             if state.opensDownward { Spacer(minLength: 0) }
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .environment(\.colorScheme, .dark)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.38, dampingFraction: 1.0), value: state.expanded)
         .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.8), value: state.dragging)
+        .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.9), value: state.docked)
         .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 1.0), value: model.rows)
     }
 }
@@ -183,7 +240,7 @@ private struct TerminalRowView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .contentShape(.rect)
-            .background(hovering ? Color.white.opacity(0.08) : .clear, in: .rect(cornerRadius: 10, style: .continuous))
+            .background(hovering ? Color.primary.opacity(0.08) : .clear, in: .rect(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(PressableStyle())
         .onHover { hovering = $0 }
@@ -225,7 +282,7 @@ private struct QuestionCard: View {
             }
         }
         .padding(12)
-        .background(Color.white.opacity(0.07), in: .rect(cornerRadius: 14, style: .continuous))
+        .background(Color.primary.opacity(0.07), in: .rect(cornerRadius: 14, style: .continuous))
     }
 
     private func open() {
@@ -252,7 +309,7 @@ private struct PermissionBody: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
-                .background(Color.white.opacity(0.08), in: .rect(cornerRadius: 8, style: .continuous))
+                .background(Color.primary.opacity(0.08), in: .rect(cornerRadius: 8, style: .continuous))
             HStack(spacing: 6) {
                 Button("Salli") { decide(.allow) }.buttonStyle(IslandButtonStyle(prominent: true))
                 Button("Kiellä") { decide(.deny) }.buttonStyle(IslandButtonStyle())
@@ -352,7 +409,7 @@ private struct OptionButton: View {
             .padding(.vertical, 7)
             .contentShape(.rect)
             .background(
-                selected ? Dot.blue.color.opacity(0.35) : Color.white.opacity(hovering ? 0.14 : 0.08),
+                selected ? Dot.blue.color.opacity(0.35) : Color.primary.opacity(hovering ? 0.14 : 0.08),
                 in: .rect(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(PressableStyle())
@@ -378,9 +435,10 @@ struct IslandButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: prominent ? .semibold : .regular))
+            .foregroundStyle(prominent ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
-            .background(prominent ? Dot.blue.color : Color.white.opacity(0.13), in: .rect(cornerRadius: 8, style: .continuous))
+            .background(prominent ? Dot.blue.color : Color.primary.opacity(0.13), in: .rect(cornerRadius: 8, style: .continuous))
             .opacity(isEnabled ? 1 : 0.4)
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.easeOut(duration: 0.1), value: configuration.isPressed)

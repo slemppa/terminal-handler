@@ -14,6 +14,14 @@ final class IslandState {
     /// The list opens downwards in the top half of the screen, upwards in the bottom half.
     var opensDownward = true
     var dragging = false
+    /// Snapped into the menu bar: flush with the top edge, square top corners.
+    var docked = false
+    /// How far the collapsed pill sits from the panel's centre line, when the
+    /// panel is pushed back on screen near a side edge.
+    var shiftX: CGFloat = 0
+    var pillWidth: CGFloat = 64
+    /// Bumped to make the island bounce for attention.
+    var attention = 0
     /// The island's frame inside the panel (top-left origin), used for hit testing.
     var islandFrame = CGRect.zero
 }
@@ -36,10 +44,36 @@ final class IslandPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// A spring described the way Apple describes it: damping ratio (1 = no
+/// overshoot) and response (seconds to reach the target, not a duration).
+private struct Spring {
+    var value: CGFloat
+    var velocity: CGFloat
+    var target: CGFloat
+    var damping: CGFloat = 1
+    var response: CGFloat = 0.4
+
+    mutating func step(_ dt: CGFloat) {
+        let stiffness = pow(2 * .pi / response, 2)
+        let friction = 4 * .pi * damping / response
+        velocity += (-stiffness * (value - target) - friction * velocity) * dt
+        value += velocity * dt
+    }
+
+    var settled: Bool { abs(value - target) < 0.3 && abs(velocity) < 4 }
+}
+
+/// Bridges the display link's Objective-C callback to a closure.
+private final class DisplayLinkTarget: NSObject {
+    let onTick: (CADisplayLink) -> Void
+    init(_ onTick: @escaping (CADisplayLink) -> Void) { self.onTick = onTick }
+    @objc func tick(_ link: CADisplayLink) { onTick(link) }
+}
+
 final class IslandController {
     static let panelSize = CGSize(width: 440, height: 600)
-    /// Half the expanded width plus a margin, so the open list stays on screen.
-    private static let edgeInset: CGFloat = 214
+    /// How far below the menu bar a drop is still pulled into it.
+    private static let dockReach: CGFloat = 60
     private static let anchorKey = "islandAnchor"
 
     private let model: AppModel
@@ -54,22 +88,28 @@ final class IslandController {
     private var dragStart: (mouse: CGPoint, anchor: CGPoint)?
     private var mouseDownAt: CGPoint?
     private var mouseMonitor: Any?
+    /// Recent drag positions, for the release velocity.
+    private var samples: [(time: TimeInterval, point: CGPoint)] = []
+    private var springX = Spring(value: 0, velocity: 0, target: 0)
+    private var springY = Spring(value: 0, velocity: 0, target: 0)
+    private var displayLink: CADisplayLink?
+    private lazy var linkTarget = DisplayLinkTarget { [weak self] link in self?.step(link) }
+    private var flying: Bool { displayLink != nil }
 
     init(model: AppModel) {
         self.model = model
-        anchor = Self.savedAnchor() ?? Self.defaultAnchor()
+        anchor = .zero
+        anchor = resolved(Self.savedAnchor() ?? Self.defaultAnchor())
         let host = FirstMouseHostingView(rootView: IslandView(model: model, state: state, controller: self))
         host.sizingOptions = []
         panel.contentView = host
-        // A position saved on a display that is no longer attached would leave the island off screen.
-        anchor = clamped(anchor)
         placePanel()
         panel.orderFrontRegardless()
 
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.anchor = self.clamped(self.anchor)
+                self.anchor = self.resolved(self.anchor)
                 self.placePanel()
             }
         }
@@ -92,7 +132,7 @@ final class IslandController {
 
     private static func defaultAnchor() -> CGPoint {
         let visible = NSScreen.screens.first?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        return CGPoint(x: visible.maxX - edgeInset - 20, y: visible.maxY - IslandState.pillHeight / 2 - 12)
+        return CGPoint(x: visible.maxX - 240, y: visible.maxY - IslandState.pillHeight / 2 - 12)
     }
 
     private static func savedAnchor() -> CGPoint? {
@@ -101,53 +141,57 @@ final class IslandController {
     }
 
     private func screen(containing point: CGPoint) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.screens.first
+        NSScreen.screens.first { $0.frame.contains(point) }
+            ?? NSScreen.screens.first { $0.frame.contains(anchor) }
+            ?? NSScreen.main
     }
 
-    /// Keeps the pill on screen and far enough from the sides for the open list.
-    /// The whole screen frame counts, menu bar included: the island is meant
-    /// to sit up there next to the notch.
-    private func clamped(_ point: CGPoint) -> CGPoint {
-        guard let visible = screen(containing: point)?.frame else { return point }
-        let half = IslandState.pillHeight / 2
-        let inset = min(Self.edgeInset, visible.width / 2)
-        return CGPoint(x: min(max(point.x, visible.minX + inset), visible.maxX - inset),
-                       y: min(max(point.y, visible.minY + half + 4), visible.maxY - half))
+    /// The pill is near enough the top edge to belong in the menu bar.
+    private func isDockable(_ point: CGPoint, on screen: NSScreen) -> Bool {
+        // An auto-hidden menu bar has no height of its own; use the usual one.
+        let menuBarHeight = max(screen.frame.maxY - screen.visibleFrame.maxY, 24)
+        return point.y + IslandState.pillHeight / 2 >= screen.frame.maxY - menuBarHeight - Self.dockReach
     }
 
-    /// How close to the menu bar a drop has to land to be pulled into it.
-    private static let menuBarPull: CGFloat = 60
-
-    /// A drop near the top of the screen is pulled into the menu bar, centred in it.
-    private func snappedToMenuBar(_ point: CGPoint) -> CGPoint {
+    /// Keeps the pill on screen, and snaps it into the menu bar when it is
+    /// brought close enough to the top edge.
+    private func resolved(_ point: CGPoint) -> CGPoint {
         guard let screen = screen(containing: point) else { return point }
-        let barHeight = screen.frame.maxY - screen.visibleFrame.maxY
-        // An auto-hiding menu bar leaves no strip to sit in; use the usual height.
-        let bar = barHeight > 0 ? barHeight : 24
-        guard point.y > screen.frame.maxY - bar - Self.menuBarPull else { return point }
+        let frame = screen.frame
+        let visible = screen.visibleFrame
         let half = IslandState.pillHeight / 2
-        return CGPoint(x: point.x, y: min(screen.frame.maxY - bar / 2, screen.frame.maxY - half))
+        let halfWidth = state.pillWidth / 2
+        var x = min(max(point.x, frame.minX + halfWidth + 4), frame.maxX - halfWidth - 4)
+
+        let docked = isDockable(point, on: screen)
+        state.docked = docked
+        guard docked else {
+            return CGPoint(x: x, y: min(max(point.y, frame.minY + half + 4), visible.maxY - half - 4))
+        }
+        // The camera notch would hide the pill: slide it to the nearer side.
+        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+            let notch = (left.maxX - 6)...(right.minX + 6)
+            if x + halfWidth > notch.lowerBound && x - halfWidth < notch.upperBound {
+                x = x < (notch.lowerBound + notch.upperBound) / 2 ? notch.lowerBound - halfWidth : notch.upperBound + halfWidth
+            }
+        }
+        return CGPoint(x: x, y: frame.maxY - half)
     }
 
     /// Positions the panel so the pill sits on `anchor` and the list has room to open.
-    private func placePanel(animated: Bool = false) {
+    private func placePanel() {
         let size = Self.panelSize
+        var x = anchor.x - size.width / 2
         if let screen = screen(containing: anchor) {
-            state.opensDownward = anchor.y > screen.visibleFrame.midY
+            state.opensDownward = state.docked || anchor.y > screen.visibleFrame.midY
+            // Keep the panel, and so the open list, on screen; the pill shifts inside it.
+            x = min(max(x, screen.frame.minX), screen.frame.maxX - size.width)
         }
+        state.shiftX = anchor.x - (x + size.width / 2)
         let half = IslandState.pillHeight / 2
         let pad: CGFloat = 12 // IslandView's vertical padding, room for the shadow
         let y = state.opensDownward ? anchor.y + half + pad - size.height : anchor.y - half - pad
-        let frame = CGRect(x: anchor.x - size.width / 2, y: y, width: size.width, height: size.height)
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.18
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().setFrame(frame, display: true)
-            }
-        } else {
-            panel.setFrame(frame, display: true)
-        }
+        panel.setFrame(CGRect(x: x, y: y, width: size.width, height: size.height), display: true)
     }
 
     /// The island's rect in screen coordinates, padded for easier hover.
@@ -165,6 +209,7 @@ final class IslandController {
         let mouse = NSEvent.mouseLocation
         switch event.type {
         case .leftMouseDown:
+            stopFlight()
             mouseDownAt = mouse
             return event
         case .leftMouseDragged:
@@ -189,23 +234,106 @@ final class IslandController {
 
     private func dragMoved(to mouse: CGPoint) {
         guard let start = dragStart else { return }
-        anchor = CGPoint(x: start.anchor.x + mouse.x - start.mouse.x, y: start.anchor.y + mouse.y - start.mouse.y)
+        anchor = rubberBanded(CGPoint(x: start.anchor.x + mouse.x - start.mouse.x, y: start.anchor.y + mouse.y - start.mouse.y))
+        if let screen = screen(containing: anchor) { state.docked = isDockable(anchor, on: screen) }
+        let now = ProcessInfo.processInfo.systemUptime
+        samples.append((now, anchor))
+        samples.removeAll { now - $0.time > 0.1 }
         placePanel()
+    }
+
+    /// Follows the mouse 1:1, but resists progressively past the screen edges
+    /// instead of stopping dead.
+    private func rubberBanded(_ point: CGPoint) -> CGPoint {
+        guard let frame = screen(containing: point)?.frame else { return point }
+        let half = IslandState.pillHeight / 2
+        let halfWidth = state.pillWidth / 2
+        func band(_ value: CGFloat, _ low: CGFloat, _ high: CGFloat) -> CGFloat {
+            func resist(_ over: CGFloat) -> CGFloat { over * 200 * 0.55 / (200 + 0.55 * over) }
+            if value < low { return low - resist(low - value) }
+            if value > high { return high + resist(value - high) }
+            return value
+        }
+        return CGPoint(x: band(point.x, frame.minX + halfWidth + 4, frame.maxX - halfWidth - 4),
+                       y: band(point.y, frame.minY + half + 4, frame.maxY - half))
     }
 
     private func dragEnded() {
         dragStart = nil
         state.dragging = false
-        anchor = clamped(snappedToMenuBar(anchor))
-        placePanel(animated: true)
-        UserDefaults.standard.set([anchor.x, anchor.y], forKey: Self.anchorKey)
         insideSince = nil
+        let velocity = releaseVelocity()
+        samples = []
+        // Land where the throw was heading, not where the mouse let go.
+        let projected = CGPoint(x: anchor.x + Self.project(velocity.dx), y: anchor.y + Self.project(velocity.dy))
+        let target = resolved(projected)
+        UserDefaults.standard.set([target.x, target.y], forKey: Self.anchorKey)
+        fly(to: target, velocity: velocity)
+    }
+
+    private func releaseVelocity() -> CGVector {
+        let now = ProcessInfo.processInfo.systemUptime
+        // Held still before letting go: no throw.
+        guard let first = samples.first, let last = samples.last, now - last.time < 0.05 else { return .zero }
+        let dt = last.time - first.time
+        guard dt > 0.008 else { return .zero }
+        return CGVector(dx: (last.point.x - first.point.x) / dt, dy: (last.point.y - first.point.y) / dt)
+    }
+
+    /// Apple's momentum projection, with a short deceleration so a flick
+    /// throws the island a little way rather than across the screen.
+    private static func project(_ velocity: CGFloat, deceleration: CGFloat = 0.99) -> CGFloat {
+        velocity / 1000 * deceleration / (1 - deceleration)
+    }
+
+    private func fly(to target: CGPoint, velocity: CGVector) {
+        stopFlight()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            anchor = target
+            placePanel()
+            return
+        }
+        // A throw earns a touch of bounce; a plain drop settles without one.
+        // Never bounce up into the top edge.
+        let thrown = hypot(velocity.dx, velocity.dy) > 400
+        springX = Spring(value: anchor.x, velocity: velocity.dx, target: target.x, damping: thrown ? 0.85 : 1)
+        springY = Spring(value: anchor.y, velocity: velocity.dy, target: target.y,
+                         damping: thrown && !state.docked ? 0.85 : 1)
+        let link = panel.displayLink(target: linkTarget, selector: #selector(DisplayLinkTarget.tick(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    private func step(_ link: CADisplayLink) {
+        let dt = CGFloat(min(max(link.targetTimestamp - link.timestamp, 1.0 / 240), 1.0 / 30))
+        let substeps = 4
+        for _ in 0..<substeps {
+            springX.step(dt / CGFloat(substeps))
+            springY.step(dt / CGFloat(substeps))
+        }
+        if state.docked && springY.value > springY.target {
+            springY.value = springY.target
+            springY.velocity = 0
+        }
+        if springX.settled && springY.settled {
+            anchor = CGPoint(x: springX.target, y: springY.target)
+            stopFlight()
+        } else {
+            anchor = CGPoint(x: springX.value, y: springY.value)
+        }
+        placePanel()
+    }
+
+    /// Grabbing the island mid-flight takes over from wherever it is now.
+    private func stopFlight() {
+        displayLink?.invalidate()
+        displayLink = nil
     }
 
     // MARK: Mouse
 
     private func trackMouse() {
-        guard !state.dragging else { return }
+        guard !state.dragging, !flying else { return }
         let inside = hitRect.contains(NSEvent.mouseLocation)
         panel.ignoresMouseEvents = !inside
         let now = Date.now
@@ -233,7 +361,8 @@ final class IslandController {
 
     /// A new question: pop open for a while unless Sami is already in it.
     func questionArrived() {
-        guard !state.expanded, !state.dragging else { return }
+        if !state.dragging { state.attention += 1 }
+        guard !state.expanded, !state.dragging, !flying else { return }
         setExpanded(true)
         autoCollapseAt = Date.now.addingTimeInterval(6)
     }
@@ -245,7 +374,7 @@ final class IslandController {
     private func jarvisPhaseChanged(_ phase: JarvisController.Phase) {
         switch phase {
         case .received, .thinking, .speaking:
-            if !state.expanded, !state.dragging { setExpanded(true) }
+            if !state.expanded, !state.dragging, !flying { setExpanded(true) }
             if state.expanded { autoCollapseAt = .distantFuture }
         case .idle, .failed:
             if state.expanded, autoCollapseAt != nil { autoCollapseAt = Date.now.addingTimeInterval(phase == .idle ? 5 : 8) }
