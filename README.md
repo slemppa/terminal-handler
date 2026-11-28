@@ -47,7 +47,25 @@ Remove the hooks from the same menu.
 
 Design notes: [`docs/superpowers/specs`](docs/superpowers/specs).
 
-Jarvis from an iPhone (Siri Shortcut or the native app over Tailscale, including viewing and controlling the Mac's screen from the phone): [`docs/jarvis-puhelin.md`](docs/jarvis-puhelin.md).
+## Jarvis (optional)
+
+Jarvis runs a headless Claude Code session on your Mac that you talk to instead of a terminal. Its permission questions show up in the island like any other session's.
+
+- **On the Mac:** dictate with [FluidVoice](https://github.com/altic-dev/FluidVoice)'s Command Mode, which Terminal Handler serves as a local OpenAI-compatible endpoint on `127.0.0.1:8765`. Notes: [`docs/jarvis-handoff.md`](docs/jarvis-handoff.md).
+- **From an iPhone:** the Jarvis app in `iOS/` (or a Siri Shortcut) reaches the Mac over [Tailscale](https://tailscale.com) with `tailscale serve`, never over the open internet. Speak or type a command, answer Allow/Deny on the phone, and, if you turn it on, see and control the Mac's screen from the phone. Setup: [`docs/jarvis-puhelin.md`](docs/jarvis-puhelin.md) (Finnish).
+
+Every phone route needs the API key from the island's menu. Screen control is off until you turn it on in the same menu, because the key then gives full control of the Mac.
+
+### Build the iPhone app
+
+```sh
+brew install xcodegen
+cd iOS
+JARVIS_TEAM_ID=<your Apple team id> ./generate.sh   # optional: JARVIS_BUNDLE_ID=com.you.jarvis
+open JarvisPhone.xcodeproj                         # pick your iPhone, press ⌘R
+```
+
+In the app's settings, enter the address `tailscale serve status` shows and the API key.
 
 ## Development
 
