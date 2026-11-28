@@ -28,6 +28,8 @@ final class Session {
     private(set) var heard = ""
     private(set) var reply = ""
     private(set) var history: [Entry] = []
+    /// Set when "näytä ruutu" was said or typed; the view opens the screen.
+    var showScreen = false
 
     private let listener = Listener()
     private let speaker = Speaker()
@@ -71,6 +73,10 @@ final class Session {
         guard let client = Settings.client else {
             phase = .failed(RemoteError.notConfigured.localizedDescription)
             return false
+        }
+        if ScreenRequest.matches(text) {
+            showScreen = true
+            return true
         }
         run?.cancel()
         aloud = false
@@ -121,6 +127,11 @@ final class Session {
             return
         }
         heard = text
+        if ScreenRequest.matches(text) {
+            phase = .idle
+            showScreen = true
+            return
+        }
         phase = .sending
         await follow({ try await client.command(text) }, client: client)
     }

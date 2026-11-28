@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct JarvisApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var session = Session()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -13,6 +14,7 @@ struct JarvisApp: App {
                     if phase == .active { startIfAsked() }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .jarvisListen)) { _ in startIfAsked() }
+                .onReceive(NotificationCenter.default.publisher(for: .jarvisScreen)) { _ in session.showScreen = true }
         }
     }
 
@@ -25,6 +27,7 @@ struct JarvisApp: App {
 
 extension Notification.Name {
     static let jarvisListen = Notification.Name("jarvisListen")
+    static let jarvisScreen = Notification.Name("jarvisScreen")
 }
 
 enum ListenRequest {
@@ -51,11 +54,27 @@ struct ListenIntent: AppIntent {
     }
 }
 
+struct ScreenIntent: AppIntent {
+    static let title: LocalizedStringResource = "Näytä Macin ruutu"
+    static let description = IntentDescription("Avaa Macin näytön Jarvisiin, ja voit ohjata sitä puhelimella.")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        NotificationCenter.default.post(name: .jarvisScreen, object: nil)
+        return .result()
+    }
+}
+
 struct JarvisShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: ListenIntent(),
                     phrases: ["\(.applicationName)", "Puhu \(.applicationName)lle", "Kysy \(.applicationName)lta"],
                     shortTitle: "Puhu Jarvisille",
                     systemImageName: "waveform")
+        AppShortcut(intent: ScreenIntent(),
+                    phrases: ["\(.applicationName), näytä ruutu", "\(.applicationName), näytä Macin ruutu"],
+                    shortTitle: "Macin ruutu",
+                    systemImageName: "display")
     }
 }
